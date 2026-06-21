@@ -1,0 +1,114 @@
+:root {
+  --accent: #7c7cf5;
+}
+
+body.video {
+  --accent: #ef4444;
+}
+
+#hint .rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #ef4444;
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+#hint .rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  animation: recpulse 1.1s ease-in-out infinite;
+}
+@keyframes recpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+#dim {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 8, 12, 0.32);
+}
+
+#sel {
+  position: fixed;
+  display: none;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 100000px rgba(8, 8, 12, 0.42);
+  background: transparent;
+  /* The selection itself is a clear window onto the screen. */
+  cursor: crosshair;
+}
+
+#size {
+  position: fixed;
+  display: none;
+  padding: 2px 8px;
+  font: 600 12px/1.4 'Segoe UI', system-ui, sans-serif;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+#hint {
+  position: fixed;
+  left: 50%;
+  top: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  font: 500 13px/1 'Segoe UI', system-ui, sans-serif;
+  color: #e8e8ee;
+  background: rgba(18, 18, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  transition: opacity 0.15s ease;
+}
+
+#hint .key {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  font-weight: 600;
+}
+
+#hint .dot {
+  opacity: 0.35;
+}
+
+.obtn {
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e8ee;
+  font: 500 13px/1 'Segoe UI', system-ui, sans-serif;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.obtn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.obtn.ghost:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}

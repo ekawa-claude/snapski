@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "SnapSki for Chrome",
+  "version": "0.1.0",
+  "description": "Capture browser tabs (visible area or full page) and annotate them — arrows, boxes, blur, numbered steps, text, crop.",
+  "permissions": ["activeTab", "scripting", "downloads", "storage", "unlimitedStorage", "contextMenus"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SnapSki — capture & annotate",
+    "default_icon": {
+      "16": "icons/markp16.png",
+      "32": "icons/markp32.png",
+      "48": "icons/markp48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "capture-visible": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Capture the visible area of the current tab"
+    },
+    "capture-region": {
+      "suggested_key": { "default": "Alt+R" },
+      "description": "Select a region to capture on the current tab"
+    }
+  }
+}
