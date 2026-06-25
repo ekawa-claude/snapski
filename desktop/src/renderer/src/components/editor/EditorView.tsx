@@ -12,7 +12,7 @@ import {
 } from 'fabric'
 import type { CaptureResult } from '@shared/types'
 import { blurRegion } from './pixelate'
-import { makeArrow } from './arrow'
+import { makeArrow, Arrow } from './arrow'
 import { Callout } from './Callout'
 import { EditorToolbar, type Tool } from './EditorToolbar'
 
@@ -112,6 +112,8 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
   const aimRef = useRef<{ bubble: FabricObject; preview: FabricObject | null; armed: boolean } | null>(
     null
   )
+  // Ephemeral reshape handles (start / end / bend) shown while an arrow is selected.
+  const arrowSelRef = useRef<{ arrow: FabricObject; handles: FabricObject[] } | null>(null)
 
   const drawing = useRef<{ obj: FabricObject | null; x: number; y: number } | null>(null)
   // Pending crop marquee: the fabric Rect overlay + its region in scene (natural px) coords.
@@ -234,6 +236,94 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     if (a && a.kind === 'callout') startAim(a)
   }
 
+  // ---------- arrow reshape handles ----------
+  // Remove any active reshape handles from the canvas.
+  const tearDownArrowHandles = (): void => {
+    const c = fcRef.current
+    const sel = arrowSelRef.current
+    if (sel && c) sel.handles.forEach((h) => c.remove(h))
+    arrowSelRef.current = null
+  }
+
+  // Show three draggable handles (start / end / bend) for the given arrow.
+  const buildArrowHandles = (arrow: FabricObject): void => {
+    const c = fcRef.current
+    if (!c) return
+    if (arrowSelRef.current?.arrow === arrow) return
+    tearDownArrowHandles()
+    const ar = arrow as Arrow
+    const pts = ar.getPointsAbsolute()
+    const col = (ar.stroke as string) || colorRef.current
+    const mk = (x: number, y: number, role: string): FabricObject => {
+      const h = new Circle({
+        left: x,
+        top: y,
+        radius: 6,
+        originX: 'center',
+        originY: 'center',
+        fill: role === 'ctrl' ? col : '#ffffff',
+        stroke: role === 'ctrl' ? '#ffffff' : col,
+        strokeWidth: 2,
+        hasControls: false,
+        hasBorders: false,
+        excludeFromExport: true
+      } as never)
+      ;(h as unknown as { kind: string; role: string }).kind = 'handle'
+      ;(h as unknown as { role: string }).role = role
+      c.add(h)
+      return h
+    }
+    const handles = [
+      mk(pts.x1, pts.y1, 'p1'),
+      mk(pts.x2, pts.y2, 'p2'),
+      mk(pts.cx, pts.cy, 'ctrl')
+    ]
+    arrowSelRef.current = { arrow, handles }
+    c.requestRenderAll()
+  }
+
+  // Move the handles back onto the arrow's current points (after a move/reshape).
+  const repositionArrowHandles = (): void => {
+    const sel = arrowSelRef.current
+    if (!sel) return
+    const pts = (sel.arrow as Arrow).getPointsAbsolute()
+    const pos: Record<string, { x: number; y: number }> = {
+      p1: { x: pts.x1, y: pts.y1 },
+      p2: { x: pts.x2, y: pts.y2 },
+      ctrl: { x: pts.cx, y: pts.cy }
+    }
+    sel.handles.forEach((h) => {
+      const role = (h as unknown as { role: string }).role
+      const m = pos[role]
+      if (m) {
+        h.set({ left: m.x, top: m.y })
+        h.setCoords()
+      }
+    })
+  }
+
+  // A handle is being dragged: push its position into the arrow's geometry.
+  const onHandleMoving = (h: FabricObject): void => {
+    const sel = arrowSelRef.current
+    if (!sel) return
+    const ar = sel.arrow as Arrow
+    const role = (h as unknown as { role: string }).role
+    const ctr = h.getCenterPoint()
+    const pts = ar.getPointsAbsolute()
+    if (role === 'p1') {
+      pts.x1 = ctr.x
+      pts.y1 = ctr.y
+    } else if (role === 'p2') {
+      pts.x2 = ctr.x
+      pts.y2 = ctr.y
+    } else {
+      pts.cx = ctr.x
+      pts.cy = ctr.y
+    }
+    ar.setPointsAbsolute(pts.x1, pts.y1, pts.cx, pts.cy, pts.x2, pts.y2)
+    fcRef.current?.requestRenderAll()
+  }
+
   // ---------- history ----------
   const snapshot = useCallback(() => {
     const c = fcRef.current
@@ -267,6 +357,9 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
       const c = fcRef.current
       if (!c) return
       history.current.restoring = true
+      // loadFromJSON drops every object (handles are excludeFromExport, so they're
+      // gone too) — clear the stale handle refs before they dangle.
+      arrowSelRef.current = null
       await c.loadFromJSON(json)
       // The background image is the source of truth for canvas size — restoring it
       // also restores any earlier crop (dimensions aren't part of the JSON itself).
@@ -313,11 +406,22 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     const c = fcRef.current
     if (!c) return
     const active = c.getActiveObjects()
+    // If a reshape handle is "selected", Delete should drop the whole arrow.
+    const sel = arrowSelRef.current
+    if (sel && active.some((o) => (o as FabricObject & { kind?: string }).kind === 'handle')) {
+      c.remove(sel.arrow)
+      tearDownArrowHandles()
+      c.discardActiveObject()
+      c.requestRenderAll()
+      snapshot()
+      return
+    }
     if (!active.length) return
     active.forEach((o) => c.remove(o))
     c.discardActiveObject()
     c.requestRenderAll()
     snapshot()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot])
 
   // Apply the pending crop: rebuild the base image, resize the canvas, and shift
@@ -407,25 +511,43 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
 
     // change tracking
     const onChange = (): void => snapshot()
-    c.on('object:added', () => {
+    c.on('object:added', (e) => {
+      // Reshape handles aren't part of the drawing; never snapshot for them.
+      if ((e.target as FabricObject & { kind?: string })?.kind === 'handle') return
       // Don't snapshot the live pointer-aim preview arrows; the commit snapshots once.
       if (!drawing.current && !aimRef.current) snapshot()
     })
     c.on('object:modified', (e) => {
-      const o = e.target
-      if (o && (o as FabricObject & { kind?: string }).kind === 'blur') reblur(o)
+      const o = e.target as (FabricObject & { kind?: string }) | undefined
+      if (o && o.kind === 'blur') reblur(o)
+      // Keep handles glued to the arrow after a move or reshape.
+      if (o && (o.kind === 'handle' || o.kind === 'arrow')) repositionArrowHandles()
       onChange()
+    })
+    c.on('object:moving', (e) => {
+      const o = e.target as (FabricObject & { kind?: string }) | undefined
+      if (!o) return
+      if (o.kind === 'handle') onHandleMoving(o)
+      else if (o.kind === 'arrow') repositionArrowHandles()
     })
     c.on('object:removed', () => {})
 
     // track selection so the properties panel can edit the selected object
     const onSelect = (): void => {
       const a = c.getActiveObject() as AnyObj | null
-      if (a) syncPanelFromObject(a)
+      if (!a) return
+      // Selecting one of our own reshape handles shouldn't disturb the panel.
+      if (a.kind === 'handle') return
+      syncPanelFromObject(a)
+      if (a.kind === 'arrow') buildArrowHandles(a)
+      else tearDownArrowHandles()
     }
     c.on('selection:created', onSelect)
     c.on('selection:updated', onSelect)
-    c.on('selection:cleared', () => setSelectedKind(null))
+    c.on('selection:cleared', () => {
+      setSelectedKind(null)
+      tearDownArrowHandles()
+    })
 
     // ---------- drawing interactions ----------
     c.on('mouse:down', (opt) => {
@@ -759,9 +881,7 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
       a.set('fill', col)
       if (textOutlineRef.current) applyTextOutline(a as unknown as IText, true, col)
     } else if (kind === 'arrow') {
-      const parts = a.getObjects?.() ?? []
-      parts[0]?.set('stroke', col)
-      parts[1]?.set('fill', col)
+      a.set('stroke', col)
     } else a.set('stroke', col)
     a.set('dirty', true)
     c?.requestRenderAll()
@@ -776,12 +896,11 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     const kind = a.kind ?? a.type
     if (kind === 'rect') a.set('strokeWidth', n)
     else if (kind === 'arrow') {
-      const parts = a.getObjects?.() ?? []
-      parts[0]?.set('strokeWidth', n)
+      a.set('strokeWidth', n)
       // Scale the arrowhead to match the shaft (mirrors makeArrow's headSize).
-      const headSize = Math.max(22, n * 6)
-      parts[1]?.set({ width: headSize, height: headSize })
-      parts[1]?.set('dirty', true)
+      ;(a as unknown as Arrow).headSize = Math.max(22, n * 6)
+      ;(a as unknown as Arrow).reflow()
+      repositionArrowHandles()
     } else if (kind === 'text' || kind === 'label' || a.type === 'i-text') {
       a.set('fontSize' as never, Math.max(18, n * 6))
       if (textOutlineRef.current) applyTextOutline(a as unknown as IText, true, (a.fill as string) ?? color)
@@ -812,13 +931,12 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     } else if (kind === 'text' || a.type === 'i-text' || a.type === 'text') {
       if (a.fill) setColor(a.fill)
     } else if (kind === 'arrow') {
-      const s = a.getObjects?.()[0]?.get('stroke') as string
-      if (s) setColor(s)
+      if (a.stroke) setColor(a.stroke)
     } else if (a.stroke) setColor(a.stroke)
 
     if (kind === 'rect') setStrokeWidth(Math.max(1, Math.round((a as { strokeWidth?: number }).strokeWidth ?? 4)))
     else if (kind === 'arrow') {
-      const sw = a.getObjects?.()[0]?.get('strokeWidth') as number
+      const sw = (a as { strokeWidth?: number }).strokeWidth
       if (sw) setStrokeWidth(Math.max(1, Math.round(sw)))
     } else if (kind === 'text' || kind === 'label') {
       setStrokeWidth(Math.max(1, Math.round((a.fontSize ?? 24) / 6)))
@@ -876,6 +994,7 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     if (!c) return
     setSaving(true)
     c.discardActiveObject()
+    tearDownArrowHandles()
     c.requestRenderAll()
     const dataUrl = c.toDataURL({ format: 'png', multiplier: 1, enableRetinaScaling: false })
     await window.snap.exportImage(dataUrl)
