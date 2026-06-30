@@ -71,6 +71,12 @@ const api = {
     const listener = (_e: Electron.IpcRendererEvent, r: CaptureResult): void => cb(r)
     ipcRenderer.on('capture:done', listener)
     return () => ipcRenderer.removeListener('capture:done', listener)
+  },
+  // Silent history refresh (instant fullscreen) — does NOT raise the window.
+  onHistoryChanged: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('history:changed', listener)
+    return () => ipcRenderer.removeListener('history:changed', listener)
   }
 }
 

@@ -17,8 +17,8 @@ import { createReadStream } from 'fs'
 import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { loadSettings, saveSettings, ensureOutputFolder } from './settings'
-import { captureRegion, captureFullscreen } from './capture'
-import { copyImageToClipboard, copyFileToClipboard } from './clipboard'
+import { captureRegion, captureFullscreen, captureRectFast } from './capture'
+import { copyNativeImageToClipboard, copyFileToClipboard } from './clipboard'
 import { getForegroundWindowRectDip } from './winutil'
 import { videoThumbnail } from './thumbs'
 import { exportVideo } from './videoedit'
@@ -254,20 +254,33 @@ function timestampName(prefix: string, ext: string): string {
 
 async function finishCapture(image: Electron.NativeImage, notify = true): Promise<CaptureResult> {
   const settings = loadSettings()
-  const png = image.toPNG()
   const size = image.getSize()
 
-  if (settings.copyToClipboard) copyImageToClipboard(png)
+  // Hand the bitmap straight to the clipboard — no PNG encode/decode round-trip.
+  if (settings.copyToClipboard) copyNativeImageToClipboard(image)
 
+  // Encode PNG at most once, and only when something actually needs it: the file
+  // on disk, or the data URL the renderer shows. Each encode of a 4K frame costs
+  // hundreds of ms on the main thread, so we skip the ones we don't need.
+  let png: Buffer | null = null
   let savedPath: string | null = null
   if (settings.saveToFolder) {
+    png = image.toPNG()
     ensureOutputFolder(settings.outputFolder)
     savedPath = join(settings.outputFolder, timestampName('Snap', 'png'))
     await writeFile(savedPath, png)
   }
 
+  // The data URL is only consumed by the renderer (editor/preview). Silent
+  // captures (instant fullscreen) never use it — skip the costliest step.
+  let dataUrl = ''
+  if (notify) {
+    if (!png) png = image.toPNG()
+    dataUrl = `data:image/png;base64,${png.toString('base64')}`
+  }
+
   const result: CaptureResult = {
-    dataUrl: image.toDataURL(),
+    dataUrl,
     savedPath,
     width: size.width,
     height: size.height
@@ -377,6 +390,48 @@ function destroyRecHud(): void {
   recBarWin = null
 }
 
+/**
+ * Grab a DIP rect via gdigrab (child process — no main-thread/game freeze),
+ * falling back to desktopCapturer's cropping path only if ffmpeg can't deliver.
+ */
+async function grabRegionDip(rectDip: Rect): Promise<Electron.NativeImage> {
+  const rectPhys = screen.dipToScreenRect(null as never, rectDip)
+  try {
+    return await captureRectFast(rectPhys)
+  } catch (e) {
+    console.error('fast region grab failed, falling back to desktopCapturer', e)
+    return captureRegion(rectDip)
+  }
+}
+
+/** Grab the full display under the cursor, fast path with fallback. */
+async function grabFullscreen(): Promise<Electron.NativeImage> {
+  const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const rectPhys = screen.dipToScreenRect(null as never, disp.bounds)
+  try {
+    return await captureRectFast(rectPhys)
+  } catch (e) {
+    console.error('fast fullscreen grab failed, falling back to desktopCapturer', e)
+    return captureFullscreen()
+  }
+}
+
+/**
+ * Instant fullscreen screenshot: no overlay, no focus steal, no window raise.
+ * Captures the display under the cursor, saves/copies per settings. Built for
+ * grabbing shots mid-game without being yanked out.
+ */
+async function instantFullscreen(): Promise<void> {
+  try {
+    const img = await grabFullscreen()
+    await finishCapture(img, false)
+    // Refresh the in-app history without raising/focusing the window.
+    mainWindow?.webContents.send('history:changed')
+  } catch (err) {
+    console.error('instant fullscreen failed', err)
+  }
+}
+
 // ---------- recording ----------
 function notifyRecordState(): void {
   const active = recorder.isRecording()
@@ -447,6 +502,13 @@ function registerHotkeys(): void {
       else showOverlay()
     })
     if (!ok) console.error(`Failed to register hotkey: ${hotkeys.capture}`)
+  }
+  // Dedicated instant-fullscreen hotkey (skip if it collides with the overlay key).
+  if (hotkeys.fullscreen && hotkeys.fullscreen !== hotkeys.capture) {
+    const ok = globalShortcut.register(hotkeys.fullscreen, () => {
+      void instantFullscreen()
+    })
+    if (!ok) console.error(`Failed to register hotkey: ${hotkeys.fullscreen}`)
   }
 }
 
@@ -594,7 +656,7 @@ function registerIpc(): void {
       startRecording('region', rectDip)
       return null
     }
-    const img = await captureRegion(rectDip)
+    const img = await grabRegionDip(rectDip)
     return finishCapture(img)
   })
   ipcMain.handle('overlay:fullscreen', async () => {
@@ -603,7 +665,7 @@ function registerIpc(): void {
       startRecording('fullscreen')
       return null
     }
-    const img = await captureFullscreen()
+    const img = await grabFullscreen()
     return finishCapture(img)
   })
   ipcMain.handle('overlay:window', async () => {
@@ -613,7 +675,7 @@ function registerIpc(): void {
       return null
     }
     if (pendingWindowRect) {
-      const img = await captureRegion(pendingWindowRect)
+      const img = await grabRegionDip(pendingWindowRect)
       return finishCapture(img)
     }
     const img = await captureFullscreen()

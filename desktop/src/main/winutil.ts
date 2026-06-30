@@ -25,6 +25,30 @@ Write-Output ("{0},{1},{2},{3}" -f $r.L, $r.T, ($r.Rr - $r.L), ($r.B - $r.T))
  */
 export function getForegroundWindowRectDip(): Promise<Rect | null> {
   return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      const p = spawn('xdotool', ['getactivewindow', 'getwindowgeometry'])
+      let out = ''
+      p.stdout.on('data', (d) => (out += d.toString()))
+      p.on('error', () => resolve(null))
+      p.on('close', () => {
+        const posMatch = out.match(/Position:\s*(-?\d+),\s*(-?\d+)/)
+        const geoMatch = out.match(/Geometry:\s*(\d+)x(\d+)/)
+        if (!posMatch || !geoMatch) return resolve(null)
+        const x = parseInt(posMatch[1], 10)
+        const y = parseInt(posMatch[2], 10)
+        const width = parseInt(geoMatch[1], 10)
+        const height = parseInt(geoMatch[2], 10)
+        if (width <= 0 || height <= 0) return resolve(null)
+        try {
+          const dip = screen.screenToDipRect(null as never, { x, y, width, height })
+          resolve(dip)
+        } catch {
+          resolve({ x, y, width, height })
+        }
+      })
+      return
+    }
+
     const ps = spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', PS_SCRIPT],

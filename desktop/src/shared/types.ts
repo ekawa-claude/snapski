@@ -22,6 +22,7 @@ export interface AppSettings {
   outputFolder: string
   hotkeys: {
     capture: string // global accelerator that opens the capture overlay
+    fullscreen: string // global accelerator for an instant, no-overlay fullscreen screenshot
   }
   copyToClipboard: boolean
   saveToFolder: boolean
@@ -85,3 +86,4 @@ export interface VideoExportResult {
 }
 
 export const DEFAULT_HOTKEY = 'PrintScreen'
+export const DEFAULT_FULLSCREEN_HOTKEY = 'Alt+PrintScreen'

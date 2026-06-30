@@ -34,7 +34,7 @@ function toAccelerator(e: React.KeyboardEvent): string | null {
 
 export function SettingsPanel({ settings, onClose, onChange }: Props): JSX.Element {
   const [local, setLocal] = useState(settings)
-  const [recording, setRecording] = useState(false)
+  const [recording, setRecording] = useState<'capture' | 'fullscreen' | null>(null)
   const recRef = useRef<HTMLButtonElement>(null)
 
   const patch = async (next: Partial<AppSettings>): Promise<void> => {
@@ -51,12 +51,12 @@ export function SettingsPanel({ settings, onClose, onChange }: Props): JSX.Eleme
     }
   }
 
-  const onHotkeyKeyDown = (e: React.KeyboardEvent): void => {
+  const onHotkeyKeyDown = (which: 'capture' | 'fullscreen') => (e: React.KeyboardEvent): void => {
     e.preventDefault()
     const acc = toAccelerator(e)
     if (acc && !acc.endsWith('+')) {
-      patch({ hotkeys: { capture: acc } })
-      setRecording(false)
+      patch({ hotkeys: { ...local.hotkeys, [which]: acc } })
+      setRecording(null)
       recRef.current?.blur()
     }
   }
@@ -88,21 +88,46 @@ export function SettingsPanel({ settings, onClose, onChange }: Props): JSX.Eleme
             </div>
           </Field>
 
-          {/* Hotkey */}
+          {/* Hotkeys */}
           <Field label="Capture hotkey" hint="Opens the region / fullscreen overlay anywhere.">
             <button
-              ref={recRef}
-              onClick={() => setRecording(true)}
-              onBlur={() => setRecording(false)}
-              onKeyDown={onHotkeyKeyDown}
+              ref={recording === 'capture' ? recRef : undefined}
+              onClick={() => setRecording('capture')}
+              onBlur={() => setRecording((r) => (r === 'capture' ? null : r))}
+              onKeyDown={onHotkeyKeyDown('capture')}
               className={cn(
                 'flex h-10 w-full items-center justify-between rounded-lg border bg-background px-3 text-sm transition-colors',
-                recording ? 'border-primary ring-2 ring-primary/30' : 'border-input hover:border-ring/50'
+                recording === 'capture'
+                  ? 'border-primary ring-2 ring-primary/30'
+                  : 'border-input hover:border-ring/50'
               )}
             >
               <kbd className="font-mono text-xs">{local.hotkeys.capture || '—'}</kbd>
               <span className="text-[11px] text-muted-foreground">
-                {recording ? 'Press keys…' : 'Click to change'}
+                {recording === 'capture' ? 'Press keys…' : 'Click to change'}
+              </span>
+            </button>
+          </Field>
+
+          <Field
+            label="Instant fullscreen hotkey"
+            hint="Grabs the whole screen instantly — no overlay, no window pop-up. Great for games."
+          >
+            <button
+              ref={recording === 'fullscreen' ? recRef : undefined}
+              onClick={() => setRecording('fullscreen')}
+              onBlur={() => setRecording((r) => (r === 'fullscreen' ? null : r))}
+              onKeyDown={onHotkeyKeyDown('fullscreen')}
+              className={cn(
+                'flex h-10 w-full items-center justify-between rounded-lg border bg-background px-3 text-sm transition-colors',
+                recording === 'fullscreen'
+                  ? 'border-primary ring-2 ring-primary/30'
+                  : 'border-input hover:border-ring/50'
+              )}
+            >
+              <kbd className="font-mono text-xs">{local.hotkeys.fullscreen || '—'}</kbd>
+              <span className="text-[11px] text-muted-foreground">
+                {recording === 'fullscreen' ? 'Press keys…' : 'Click to change'}
               </span>
             </button>
           </Field>

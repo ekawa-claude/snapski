@@ -55,6 +55,8 @@ function App(): JSX.Element {
       setEditingVideo(null)
       refreshHistory()
     })
+    // Instant fullscreen: refresh the grid in place, without raising the window.
+    const offHistory = window.snap.onHistoryChanged(() => refreshHistory())
     const offRecState = window.snap.onRecordState((s) => setRecording(s.active))
     const offRecDone = window.snap.onRecordDone((r) => {
       showToast(r.ok ? 'Recording saved & copied to clipboard' : 'Recording failed')
@@ -62,6 +64,7 @@ function App(): JSX.Element {
     })
     return () => {
       offCapture()
+      offHistory()
       offRecState()
       offRecDone()
     }

@@ -1,5 +1,7 @@
 import { desktopCapturer, screen, nativeImage, NativeImage, Display } from 'electron'
+import { spawn } from 'child_process'
 import type { Rect } from '../shared/types'
+import { ffmpegPath } from './recorder'
 
 /**
  * Capture every screen at native resolution. Passing an oversized thumbnail
@@ -72,6 +74,82 @@ export async function captureRegion(rectDip: Rect): Promise<NativeImage> {
     height: Math.max(1, Math.round((y1 - y0) * sf))
   }
   return img.crop(crop)
+}
+
+/**
+ * Fast single-frame grab via ffmpeg's gdigrab — runs in a CHILD process, so the
+ * Electron main thread never blocks. `desktopCapturer.getSources` initializes the
+ * whole capture stack on the main thread and stalls the app (and the foreground
+ * game) for seconds; gdigrab does a cheap out-of-process BitBlt instead. This is
+ * the same engine the recorder uses, so capture coverage matches recording.
+ *
+ * @param rectPhysical capture rect in PHYSICAL screen pixels (relative to the
+ *   primary monitor's top-left), e.g. from `screen.dipToScreenRect`.
+ */
+export function captureRectFast(rectPhysical: Rect): Promise<NativeImage> {
+  const w = Math.max(1, Math.round(rectPhysical.width))
+  const h = Math.max(1, Math.round(rectPhysical.height))
+  
+  const isWin = process.platform === 'win32'
+  const display = process.env.DISPLAY || ':0.0'
+  const x = Math.round(rectPhysical.x)
+  const y = Math.round(rectPhysical.y)
+
+  const inputArgs = isWin
+    ? [
+        '-f', 'gdigrab',
+        '-offset_x', String(x),
+        '-offset_y', String(y),
+        '-video_size', `${w}x${h}`,
+        '-i', 'desktop'
+      ]
+    : [
+        '-f', 'x11grab',
+        '-video_size', `${w}x${h}`,
+        '-i', `${display}+${x},${y}`
+      ]
+
+  const args = [
+    '-loglevel', 'error',
+    '-probesize', '32',
+    '-analyzeduration', '0',
+    '-draw_mouse', '0',
+    '-framerate', '30',
+    ...inputArgs,
+    '-frames:v', '1',
+    '-f', 'image2pipe',
+    '-vcodec', 'png',
+    'pipe:1'
+  ]
+  return new Promise((resolve, reject) => {
+    let p: ReturnType<typeof spawn>
+    try {
+      p = spawn(ffmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    } catch (e) {
+      reject(e)
+      return
+    }
+    const chunks: Buffer[] = []
+    let err = ''
+    p.stdout?.on('data', (d: Buffer) => chunks.push(d))
+    p.stderr?.on('data', (d: Buffer) => {
+      err += d.toString()
+      if (err.length > 4000) err = err.slice(-4000)
+    })
+    p.on('error', reject)
+    p.on('close', (code) => {
+      if (chunks.length === 0) {
+        reject(new Error(`gdigrab produced no frame (code ${code}): ${err.split('\n').slice(-4).join(' ')}`))
+        return
+      }
+      const img = nativeImage.createFromBuffer(Buffer.concat(chunks))
+      if (img.isEmpty()) {
+        reject(new Error('gdigrab frame decoded empty'))
+        return
+      }
+      resolve(img)
+    })
+  })
 }
 
 export function emptyImage(): NativeImage {

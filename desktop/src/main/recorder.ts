@@ -3,7 +3,7 @@ import ffmpegStatic from 'ffmpeg-static'
 import type { Rect, CaptureKind } from '../shared/types'
 
 /** Resolve the bundled ffmpeg path, accounting for asar packaging. */
-function ffmpegPath(): string {
+export function ffmpegPath(): string {
   let p = (ffmpegStatic as unknown as string) || 'ffmpeg'
   if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) {
     p = p.replace('app.asar', 'app.asar.unpacked')
@@ -37,28 +37,34 @@ export function startRecording(opts: StartOpts, onExit: (file: string, ok: boole
   const w = Math.max(2, Math.floor(opts.rect.width / 2) * 2)
   const h = Math.max(2, Math.floor(opts.rect.height / 2) * 2)
 
+  const isWin = process.platform === 'win32'
+  const display = process.env.DISPLAY || ':0.0'
+  const x = Math.round(opts.rect.x)
+  const y = Math.round(opts.rect.y)
+
+  const inputArgs = isWin
+    ? [
+        '-f', 'gdigrab',
+        '-framerate', String(opts.fps ?? 30),
+        '-offset_x', String(x),
+        '-offset_y', String(y),
+        '-video_size', `${w}x${h}`,
+        '-i', 'desktop'
+      ]
+    : [
+        '-f', 'x11grab',
+        '-framerate', String(opts.fps ?? 30),
+        '-video_size', `${w}x${h}`,
+        '-i', `${display}+${x},${y}`
+      ]
+
   const args = [
     '-y',
-    '-f',
-    'gdigrab',
-    '-framerate',
-    String(opts.fps ?? 30),
-    '-offset_x',
-    String(Math.round(opts.rect.x)),
-    '-offset_y',
-    String(Math.round(opts.rect.y)),
-    '-video_size',
-    `${w}x${h}`,
-    '-i',
-    'desktop',
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-pix_fmt',
-    'yuv420p',
-    '-movflags',
-    '+faststart',
+    ...inputArgs,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
     opts.outFile
   ]
 

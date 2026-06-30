@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import type { AppSettings } from '../shared/types'
-import { DEFAULT_HOTKEY } from '../shared/types'
+import { DEFAULT_HOTKEY, DEFAULT_FULLSCREEN_HOTKEY } from '../shared/types'
 
 let cache: AppSettings | null = null
 
@@ -13,7 +13,7 @@ function settingsPath(): string {
 function defaults(): AppSettings {
   return {
     outputFolder: join(app.getPath('pictures'), 'SnapSki'),
-    hotkeys: { capture: DEFAULT_HOTKEY },
+    hotkeys: { capture: DEFAULT_HOTKEY, fullscreen: DEFAULT_FULLSCREEN_HOTKEY },
     copyToClipboard: true,
     saveToFolder: true,
     captureMode: 'screenshot',

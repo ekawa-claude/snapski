@@ -1,9 +1,19 @@
 import { clipboard, nativeImage } from 'electron'
+import type { NativeImage } from 'electron'
 import { spawn } from 'child_process'
 
-/** Copy a PNG (given as a data URL or buffer) to the clipboard as an image. */
+/** Copy a PNG buffer to the clipboard as an image. */
 export function copyImageToClipboard(png: Buffer): void {
   const img = nativeImage.createFromBuffer(png)
+  if (!img.isEmpty()) clipboard.writeImage(img)
+}
+
+/**
+ * Copy a NativeImage to the clipboard directly — no PNG encode/decode round-trip.
+ * Preferred when we already hold the bitmap (the capture path), since encoding to
+ * PNG just to decode it back wastes hundreds of ms on large/4K screenshots.
+ */
+export function copyNativeImageToClipboard(img: NativeImage): void {
   if (!img.isEmpty()) clipboard.writeImage(img)
 }
 
@@ -15,6 +25,20 @@ export function copyImageToClipboard(png: Buffer): void {
  */
 export function copyFileToClipboard(filePath: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      const p = spawn('xclip', ['-selection', 'clipboard', '-t', 'text/uri-list'])
+      let err = ''
+      p.stderr.on('data', (d) => (err += d.toString()))
+      p.on('error', reject)
+      p.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`xclip exited ${code}: ${err}`))
+      })
+      p.stdin.write(`file://${filePath}\r\n`)
+      p.stdin.end()
+      return
+    }
+
     const ps = spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', 'Set-Clipboard', '-LiteralPath', filePath],
