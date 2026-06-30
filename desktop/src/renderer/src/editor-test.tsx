@@ -39,6 +39,11 @@ const capture: CaptureResult = {
   height: 560
 }
 
+// --- expose fabric + our custom classes for ad-hoc console/eval testing ---
+import('fabric').then((fabricLib) => {
+  ;(window as unknown as { __fabricLib?: unknown }).__fabricLib = fabricLib
+})
+
 // --- mock the preload bridge ---
 ;(window as unknown as { snap: unknown }).snap = {
   exportImage: async (dataUrl: string) => {

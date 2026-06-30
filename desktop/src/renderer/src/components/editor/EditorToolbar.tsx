@@ -8,6 +8,7 @@ import {
   Droplets,
   Crop,
   MessageSquareText,
+  Focus,
   Undo2,
   Redo2,
   Trash2,
@@ -29,6 +30,7 @@ export type Tool =
   | 'badge'
   | 'highlight'
   | 'blur'
+  | 'spotlight'
 
 const TOOLS: { id: Tool; icon: React.ReactNode; label: string }[] = [
   { id: 'select', icon: <MousePointer2 className="h-[18px] w-[18px]" />, label: 'Select (Esc)' },
@@ -39,10 +41,14 @@ const TOOLS: { id: Tool; icon: React.ReactNode; label: string }[] = [
   { id: 'text', icon: <Type className="h-[18px] w-[18px]" />, label: 'Text' },
   { id: 'bubble', icon: <MessageSquareText className="h-[18px] w-[18px]" />, label: 'Speech bubble' },
   { id: 'highlight', icon: <Highlighter className="h-[18px] w-[18px]" />, label: 'Highlight' },
-  { id: 'blur', icon: <Droplets className="h-[18px] w-[18px]" />, label: 'Blur region' }
+  { id: 'blur', icon: <Droplets className="h-[18px] w-[18px]" />, label: 'Blur region' },
+  { id: 'spotlight', icon: <Focus className="h-[18px] w-[18px]" />, label: 'Spotlight (dim background)' }
 ]
 
-const COLORS = ['#f43f5e', '#f59e0b', '#fde047', '#22c55e', '#3b82f6', '#7c7cf5', '#ffffff', '#111114']
+// Softer, evenly-weighted hues (Tailwind 400s) instead of saturated 500-defaults —
+// reads less "primary-color-picker", more coordinated with the app's own indigo
+// accent. Brand violet/white/black anchors kept as-is.
+const COLORS = ['#fb7185', '#fb923c', '#fbbf24', '#4ade80', '#38bdf8', '#7c7cf5', '#ffffff', '#111114']
 
 interface Props {
   tool: Tool
@@ -79,7 +85,7 @@ export function EditorToolbar(props: Props): JSX.Element {
   const showProps = ctx != null && ctx !== 'crop'
   const isText = ctx === 'text' || ctx === 'label'
   const showWidth = ctx === 'rect' || ctx === 'arrow' || isText
-  const showColor = ctx != null && ctx !== 'blur'
+  const showColor = ctx != null && ctx !== 'blur' && ctx !== 'spotlight'
 
   return (
     <>

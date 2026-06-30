@@ -1,4 +1,4 @@
-import { FabricObject, classRegistry } from 'fabric'
+import { FabricObject, Shadow, classRegistry } from 'fabric'
 
 interface ArrowOptions {
   x1?: number
@@ -118,11 +118,7 @@ export class Arrow extends FabricObject {
     const color = (this.stroke as string) || '#f43f5e'
 
     ctx.save()
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.strokeStyle = color
     ctx.fillStyle = color
-    ctx.lineWidth = this.strokeWidth ?? 4
 
     const hs = this.headSize ?? 22
     // Tangent at the end (the bezier's derivative direction there = end - control).
@@ -135,17 +131,64 @@ export class Arrow extends FabricObject {
     const tlen = Math.hypot(dx, dy) || 1
     const ux = dx / tlen
     const uy = dy / tlen
-    // Stop the shaft just shy of the tip so its rounded end cap hides under the
-    // arrowhead instead of poking out as a blob past the sharp point.
+    // Stop the shaft just shy of the tip so it hides under the arrowhead instead
+    // of poking out past the sharp point.
     const backoff = Math.min(hs * 0.9, tlen * 0.9)
     const ex = x2 - ux * backoff
     const ey = y2 - uy * backoff
 
-    // Shaft: quadratic bezier. Control at the chord midpoint == straight line.
+    // ---- Shaft: a tapered filled polygon (thin tail → full width near the
+    // head) instead of a uniform stroke — reads less mechanical, more drawn.
+    const sw = this.strokeWidth ?? 4
+    const tailHalf = Math.max(0.6, sw * 0.18)
+    const headHalf = sw / 2
+    const N = 16
+    const bezierAt = (t: number): [number, number] => {
+      const mt = 1 - t
+      return [
+        mt * mt * x1 + 2 * mt * t * cx + t * t * ex,
+        mt * mt * y1 + 2 * mt * t * cy + t * t * ey
+      ]
+    }
+    const tangentAt = (t: number): [number, number] => {
+      const mt = 1 - t
+      let tx = 2 * mt * (cx - x1) + 2 * t * (ex - cx)
+      let ty = 2 * mt * (cy - y1) + 2 * t * (ey - cy)
+      if (Math.hypot(tx, ty) < 1e-6) {
+        tx = ex - x1
+        ty = ey - y1
+      }
+      const len = Math.hypot(tx, ty) || 1
+      return [tx / len, ty / len]
+    }
+
+    const top: [number, number][] = []
+    const bottom: [number, number][] = []
+    for (let i = 0; i <= N; i++) {
+      const t = i / N
+      const [px, py] = bezierAt(t)
+      const [tx, ty] = tangentAt(t)
+      const nx = -ty
+      const ny = tx
+      const half = tailHalf + (headHalf - tailHalf) * t
+      top.push([px + nx * half, py + ny * half])
+      bottom.push([px - nx * half, py - ny * half])
+    }
+
+    // One path for the tapered shaft + a rounded tail cap (mirrors the old
+    // lineCap:'round' stroke end) so they share a single shadow silhouette
+    // instead of two overlapping ones.
+    const [t0x, t0y] = tangentAt(0)
+    const tailAngle = Math.atan2(t0y, t0x)
     ctx.beginPath()
-    ctx.moveTo(x1, y1)
-    ctx.quadraticCurveTo(cx, cy, ex, ey)
-    ctx.stroke()
+    ctx.moveTo(top[0][0], top[0][1])
+    for (let i = 1; i <= N; i++) ctx.lineTo(top[i][0], top[i][1])
+    for (let i = N; i >= 0; i--) ctx.lineTo(bottom[i][0], bottom[i][1])
+    // Arc from bottom[0] back to top[0], bulging away from the direction of
+    // travel — the same silhouette a round line cap would leave at the tail.
+    ctx.arc(x1, y1, tailHalf, tailAngle - Math.PI / 2, tailAngle + Math.PI / 2, true)
+    ctx.closePath()
+    ctx.fill()
 
     // Head: sharp triangle, tip exactly at the end, aimed along the tangent.
     const ang = Math.atan2(dy, dx)
@@ -189,6 +232,9 @@ export function makeArrow(
     stroke: color,
     strokeWidth,
     headSize: Math.max(22, strokeWidth * 6),
+    // _render draws shaft+head with raw ctx calls (no base _renderStroke/_renderFill),
+    // so fabric's pre-applied ctx shadow state covers both with no affectStroke gate.
+    shadow: new Shadow({ color: 'rgba(0,0,0,0.35)', blur: 8, offsetX: 0, offsetY: 3 }),
     kind: 'arrow'
   } as never)
   a.setPointsAbsolute(x1, y1, (x1 + x2) / 2, (y1 + y2) / 2, x2, y2)

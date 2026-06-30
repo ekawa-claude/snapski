@@ -8,6 +8,16 @@ interface CalloutOptions {
   [k: string]: unknown
 }
 
+/** Mix a hex color toward white by `amt` (0–1) — used for the border's gloss highlight. */
+function lighten(hex: string, amt: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  const mix = (c: number): number => Math.round(c + (255 - c) * amt)
+  return `#${[mix(r), mix(g), mix(b)].map((c) => c.toString(16).padStart(2, '0')).join('')}`
+}
+
 /**
  * An editable speech bubble: a real fabric Textbox (so text editing, wrapping
  * and resizing keep working) whose background is drawn as a rounded, bordered
@@ -43,10 +53,17 @@ export class Callout extends Textbox {
     ctx.fillStyle = this.bubbleFill
     ctx.fill()
     if (this.bubbleStroke && this.bubbleStrokeWidth > 0) {
-      ctx.strokeStyle = this.bubbleStroke
+      // Gradient border (lighter at the top) instead of a flat stroke. bubbleFill
+      // is white in every current use, so a glassy highlight only ever reads on
+      // the border — the one part of the bubble that's actually colored.
+      const glow = ctx.createLinearGradient(0, y, 0, y + h)
+      glow.addColorStop(0, lighten(this.bubbleStroke, 0.45))
+      glow.addColorStop(0.6, this.bubbleStroke)
+      ctx.strokeStyle = glow
       ctx.lineWidth = this.bubbleStrokeWidth
       ctx.stroke()
     }
+
     ctx.restore()
   }
 }

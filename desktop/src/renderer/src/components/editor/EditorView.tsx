@@ -8,7 +8,10 @@ import {
   Group,
   FabricText,
   FabricImage,
-  FabricObject
+  FabricObject,
+  Shadow,
+  Gradient,
+  Path
 } from 'fabric'
 import type { CaptureResult } from '@shared/types'
 import { blurRegion } from './pixelate'
@@ -31,6 +34,37 @@ function contrastText(hex: string): string {
   return lum > 0.6 ? '#111114' : '#ffffff'
 }
 
+/**
+ * Soft drop shadow shared by every annotation kind — the "flat → elevated" look.
+ * `affectStroke` must be true for stroke-only shapes (fabric drops the shadow
+ * before stroking unless told otherwise — by default it only shadows the fill).
+ */
+function dropShadow(affectStroke = false): Shadow {
+  return new Shadow({ color: 'rgba(0,0,0,0.35)', blur: 8, offsetX: 0, offsetY: 3, affectStroke })
+}
+
+/** Mix a hex color toward white by `amt` (0–1) — used for the badge gloss highlight. */
+function lighten(hex: string, amt: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  const mix = (c: number): number => Math.round(c + (255 - c) * amt)
+  return `#${[mix(r), mix(g), mix(b)].map((c) => c.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** Glossy radial fill for the badge circle: a light-from-upper-left highlight. */
+function makeBadgeGradient(color: string, r = 18): Gradient<'radial'> {
+  return new Gradient({
+    type: 'radial',
+    coords: { x1: -6, y1: -10, r1: 0, x2: 0, y2: 0, r2: r * 1.2 },
+    colorStops: [
+      { offset: 0, color: lighten(color, 0.35) },
+      { offset: 1, color }
+    ]
+  })
+}
+
 /** Toggle a contrasting outline around the glyphs for legibility. */
 function applyTextOutline(t: IText, on: boolean, color: string): void {
   if (on) {
@@ -39,10 +73,13 @@ function applyTextOutline(t: IText, on: boolean, color: string): void {
       stroke: contrastText(color),
       strokeWidth: Math.max(2, fontSize * 0.12),
       paintFirst: 'stroke',
-      strokeLineJoin: 'round'
+      strokeLineJoin: 'round',
+      // Outline is already a legibility treatment — a shadow on top reads as mud.
+      shadow: null
     })
   } else {
-    t.set({ strokeWidth: 0 })
+    // No outline: a soft shadow keeps the text readable against busy screenshots.
+    t.set({ strokeWidth: 0, shadow: dropShadow() })
   }
 }
 
@@ -588,7 +625,8 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
           kind: 'text'
         } as never)
         if (textBgRef.current) applyTextBg(text, true, colorRef.current)
-        if (textOutlineRef.current) applyTextOutline(text, true, colorRef.current)
+        // Always run (not just when on): the off-branch also sets up the shadow.
+        applyTextOutline(text, textOutlineRef.current, colorRef.current)
         c.add(text)
         setTool('select')
         c.setActiveObject(text)
@@ -604,7 +642,7 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
         const r = 18
         const circle = new Circle({
           radius: r,
-          fill: colorRef.current,
+          fill: makeBadgeGradient(colorRef.current, r),
           originX: 'center',
           originY: 'center',
           stroke: '#ffffff',
@@ -625,6 +663,9 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
           originY: 'center',
           selectable: false,
           evented: false,
+          // On the group, not the child circle: one soft shadow under the whole
+          // badge instead of two overlapping shadows.
+          shadow: dropShadow(),
           kind: 'badge'
         } as never)
         c.add(badge)
@@ -647,6 +688,7 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
           bubbleFill: '#ffffff',
           bubbleStroke: colorRef.current,
           bubbleStrokeWidth: 2.5,
+          shadow: dropShadow(),
           kind: 'callout'
         } as never)
         c.add(callout)
@@ -728,6 +770,9 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
           strokeWidth: widthRef.current,
           rx: 4,
           ry: 4,
+          // Fill is transparent, so the shadow must trace the stroked outline
+          // itself, not the (invisible) fill silhouette (see dropShadow above).
+          shadow: dropShadow(true),
           kind: 'rect'
         } as never)
       } else if (t === 'highlight') {
@@ -766,6 +811,18 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
           strokeDashArray: [6, 4],
           strokeWidth: 2,
           kind: 'crop'
+        } as never)
+      } else if (t === 'spotlight') {
+        obj = new Rect({
+          left,
+          top,
+          width: w,
+          height: h,
+          fill: 'rgba(0,0,0,0.2)',
+          stroke: '#fbbf24',
+          strokeDashArray: [6, 4],
+          strokeWidth: 2,
+          kind: 'spotlight-pending'
         } as never)
       }
 
@@ -815,6 +872,24 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
             kind: 'blur'
           } as never)
           c.add(blurImg)
+        }
+      } else if (t === 'spotlight' && obj) {
+        // Replace the marquee with one evenodd path: full canvas bounds minus
+        // the cutout — a single dim layer, not two objects fighting z-order.
+        const b = obj.getBoundingRect()
+        c.remove(obj)
+        if (b.width > 4 && b.height > 4) {
+          const cw = c.getWidth()
+          const ch = c.getHeight()
+          const d = `M 0 0 L ${cw} 0 L ${cw} ${ch} L 0 ${ch} Z M ${b.left} ${b.top} L ${b.left + b.width} ${b.top} L ${b.left + b.width} ${b.top + b.height} L ${b.left} ${b.top + b.height} Z`
+          const spotlight = new Path(d, {
+            fill: 'rgba(0,0,0,0.55)',
+            fillRule: 'evenodd',
+            selectable: false,
+            evented: false,
+            kind: 'spotlight'
+          } as never)
+          c.add(spotlight)
         }
       } else if (obj) {
         if ((obj.width ?? 0) < 3 && (obj.height ?? 0) < 3) {
@@ -876,7 +951,7 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     if (kind === 'callout') a.set('bubbleStroke' as never, col)
     else if (kind === 'label') a.set({ backgroundColor: col, fill: contrastText(col) })
     else if (kind === 'highlight') a.set('fill', col)
-    else if (kind === 'badge') a.getObjects?.()[0]?.set('fill', col)
+    else if (kind === 'badge') a.getObjects?.()[0]?.set('fill', makeBadgeGradient(col))
     else if (kind === 'text' || a.type === 'i-text' || a.type === 'text') {
       a.set('fill', col)
       if (textOutlineRef.current) applyTextOutline(a as unknown as IText, true, col)
@@ -925,9 +1000,14 @@ export function EditorView({ capture, onClose }: Props): JSX.Element {
     setSelectedKind(kind)
     if (kind === 'callout') setColor(a.bubbleStroke ?? color)
     else if (kind === 'label') setColor(a.backgroundColor ?? color)
-    else if (kind === 'highlight' || kind === 'badge') {
-      const fill = kind === 'badge' ? (a.getObjects?.()[0]?.get('fill') as string) : a.fill
-      if (fill) setColor(fill)
+    else if (kind === 'highlight') {
+      if (a.fill) setColor(a.fill)
+    } else if (kind === 'badge') {
+      // Fill is now a radial Gradient, not a plain hex string — the base color
+      // is its last (outer) color stop, see makeBadgeGradient.
+      const fill = a.getObjects?.()[0]?.get('fill') as string | Gradient<'radial'> | undefined
+      const base = typeof fill === 'string' ? fill : fill?.colorStops?.[fill.colorStops.length - 1]?.color
+      if (base) setColor(base)
     } else if (kind === 'text' || a.type === 'i-text' || a.type === 'text') {
       if (a.fill) setColor(a.fill)
     } else if (kind === 'arrow') {
