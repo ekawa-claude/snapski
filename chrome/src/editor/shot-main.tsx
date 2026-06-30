@@ -7,7 +7,6 @@ import {
   Circle,
   Group,
   IText,
-  Rect,
   FabricImage
 } from 'fabric'
 import { EditorView } from './components/editor/EditorView'

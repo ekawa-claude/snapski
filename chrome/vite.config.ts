@@ -1,25 +1,24 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'node:path'
 import { copyFileSync, cpSync, writeFileSync, mkdirSync } from 'node:fs'
 
 // TEMP dev-only endpoint so the store-screenshot harness can save PNGs to disk.
-function saveShots() {
+function saveShots(): Plugin {
   return {
     name: 'save-shots',
-    configureServer(server: { middlewares: { use: (p: string, h: unknown) => void } }) {
-      server.middlewares.use('/__save', (req: never, res: never) => {
-        const rq = req as unknown as { method: string; on: (e: string, cb: (c?: unknown) => void) => void }
-        const rs = res as unknown as { statusCode: number; end: (s?: string) => void }
-        if (rq.method !== 'POST') { rs.statusCode = 405; return rs.end('POST only') }
+    configureServer(server) {
+      server.middlewares.use('/__save', (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') { res.statusCode = 405; return res.end('POST only') }
         let body = ''
-        rq.on('data', (c) => { body += c })
-        rq.on('end', () => {
+        req.on('data', (c) => { body += c })
+        req.on('end', () => {
           const { name, data } = JSON.parse(body) as { name: string; data: string }
           const b64 = data.replace(/^data:image\/png;base64,/, '')
           mkdirSync(resolve(__dirname, 'store-shots'), { recursive: true })
           writeFileSync(resolve(__dirname, 'store-shots', name), Buffer.from(b64, 'base64'))
-          rs.end('ok')
+          res.end('ok')
         })
       })
     }
