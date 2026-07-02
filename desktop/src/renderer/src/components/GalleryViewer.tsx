@@ -12,7 +12,8 @@ import {
   Trash2,
   ZoomIn,
   ZoomOut,
-  Maximize
+  Maximize,
+  Minimize
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { HistoryItem } from '@shared/types'
@@ -46,7 +47,22 @@ export function GalleryViewer({
   const item = items[index]
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [isFull, setIsFull] = useState(false)
+  const isFullRef = useRef(false)
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
+
+  const setFullScreen = useCallback(async (on: boolean): Promise<void> => {
+    const state = await window.snap.winSetFullScreen(on)
+    isFullRef.current = state
+    setIsFull(state)
+  }, [])
+
+  // Leaving the viewer (close, or the editor replacing it) restores the window.
+  useEffect(() => {
+    return () => {
+      if (isFullRef.current) void window.snap.winSetFullScreen(false)
+    }
+  }, [])
 
   // Reset the view whenever we move to another item.
   useEffect(() => {
@@ -63,15 +79,18 @@ export function GalleryViewer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-      else if (e.key === 'ArrowLeft') prev()
+      // First Esc leaves fullscreen, the next one closes the viewer.
+      if (e.key === 'Escape') {
+        if (isFullRef.current) void setFullScreen(false)
+        else onClose()
+      } else if (e.key === 'ArrowLeft') prev()
       else if (e.key === 'ArrowRight') next()
       else if (e.key === 'Delete' && item) onDelete(item)
       else if ((e.key === 'f' || e.key === 'F') && item) onToggleFavorite(item)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, prev, next, item, onDelete, onToggleFavorite])
+  }, [onClose, prev, next, item, onDelete, onToggleFavorite, setFullScreen])
 
   if (!item) return null
   const isVideo = item.type === 'video'
@@ -225,18 +244,15 @@ export function GalleryViewer({
             >
               <ZoomOut className="h-4 w-4" />
             </ToolBtn>
-            <ToolBtn
-              label="Fit"
-              onClick={() => {
-                setZoom(1)
-                setPan({ x: 0, y: 0 })
-              }}
-              iconOnly
-            >
-              <Maximize className="h-4 w-4" />
-            </ToolBtn>
           </>
         )}
+        <ToolBtn
+          label={isFull ? 'Exit fullscreen' : 'Fullscreen'}
+          onClick={() => void setFullScreen(!isFull)}
+          iconOnly
+        >
+          {isFull ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+        </ToolBtn>
         <span className="mx-2 h-6 w-px bg-white/10" />
         <ToolBtn label={isVideo ? 'Copy file' : 'Copy image'} onClick={copyImage}>
           <Copy className="h-4 w-4" />

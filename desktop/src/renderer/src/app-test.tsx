@@ -93,6 +93,7 @@ const mock = {
   }),
   winMinimize: async () => {},
   winToggleMaximize: async () => false,
+  winSetFullScreen: async (on: boolean) => on,
   winClose: async () => {},
   stopRecording: async () => {
     recStateCb?.({ active: false })

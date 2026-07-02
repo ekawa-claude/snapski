@@ -751,6 +751,10 @@ function registerIpc(): void {
     return mainWindow.isMaximized()
   })
   ipcMain.handle('win:close', () => mainWindow?.close())
+  ipcMain.handle('win:setFullScreen', (_e, on: boolean) => {
+    mainWindow?.setFullScreen(on)
+    return mainWindow?.isFullScreen() ?? false
+  })
 
   // Overlay → main
   ipcMain.handle('overlay:region', async (_e, rectCss: Rect) => {

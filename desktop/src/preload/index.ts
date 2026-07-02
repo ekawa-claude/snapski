@@ -62,6 +62,8 @@ const api = {
   winMinimize: (): Promise<void> => ipcRenderer.invoke('win:minimize'),
   winToggleMaximize: (): Promise<boolean> => ipcRenderer.invoke('win:toggleMaximize'),
   winClose: (): Promise<void> => ipcRenderer.invoke('win:close'),
+  winSetFullScreen: (on: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('win:setFullScreen', on),
 
   // overlay → main
   overlayRegion: (rect: Rect): Promise<CaptureResult | null> =>
