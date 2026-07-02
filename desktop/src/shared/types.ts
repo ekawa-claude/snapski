@@ -58,6 +58,8 @@ export interface HistoryItem {
   type: 'image' | 'video'
   /** Small thumbnail data URL, or null if it couldn't be generated. */
   thumb: string | null
+  /** Starred in the gallery. */
+  favorite: boolean
 }
 
 export interface VideoExportOpts {

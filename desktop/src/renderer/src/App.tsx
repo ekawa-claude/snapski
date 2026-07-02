@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   Camera,
   Settings as SettingsIcon,
@@ -6,7 +6,11 @@ import {
   Check,
   Copy,
   ImageIcon,
+  ImagePlus,
+  Link2,
   Pencil,
+  Star,
+  Trash2,
   Video,
   Square,
   CircleDot,
@@ -20,6 +24,13 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { WindowControls } from './components/WindowControls'
 import { EditorView } from './components/editor/EditorView'
 import { VideoEditorView } from './components/video/VideoEditorView'
+import { GalleryViewer } from './components/GalleryViewer'
+
+interface CtxMenu {
+  x: number
+  y: number
+  item: HistoryItem
+}
 
 function App(): JSX.Element {
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -30,8 +41,19 @@ function App(): JSX.Element {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
+  const [filterFav, setFilterFav] = useState(false)
+  const [viewerPath, setViewerPath] = useState<string | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
+  const [dropHint, setDropHint] = useState(false)
 
   const mode: CaptureMode = settings?.captureMode ?? 'screenshot'
+
+  const visible = useMemo(
+    () => (filterFav ? history.filter((h) => h.favorite) : history),
+    [history, filterFav]
+  )
+  const favCount = useMemo(() => history.filter((h) => h.favorite).length, [history])
+  const viewerIndex = viewerPath ? visible.findIndex((h) => h.path === viewerPath) : -1
 
   const refreshHistory = useCallback(async () => {
     setHistory(await window.snap.listHistory())
@@ -62,13 +84,35 @@ function App(): JSX.Element {
       showToast(r.ok ? 'Recording saved & copied to clipboard' : 'Recording failed')
       refreshHistory()
     })
+    // Surface hotkeys another app grabbed before us.
+    const warnHotkeys = (keys: string[]): void => {
+      if (keys.length) showToast(`Hotkey ${keys.join(', ')} is taken by another app`)
+    }
+    window.snap.getHotkeyFailures().then(warnHotkeys)
+    const offHotkeys = window.snap.onHotkeysFailed(warnHotkeys)
     return () => {
       offCapture()
       offHistory()
       offRecState()
       offRecDone()
+      offHotkeys()
     }
   }, [refreshHistory, showToast])
+
+  // Any click/escape dismisses the tile context menu.
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = (): void => setCtxMenu(null)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [ctxMenu])
 
   const setMode = useCallback(async (m: CaptureMode) => {
     setSettings(await window.snap.setSettings({ captureMode: m }))
@@ -88,8 +132,62 @@ function App(): JSX.Element {
     refreshHistory()
   }, [refreshHistory])
 
+  const toggleFavorite = useCallback((item: HistoryItem) => {
+    // Optimistic: flip locally, persist in the background.
+    setHistory((hs) =>
+      hs.map((h) => (h.path === item.path ? { ...h, favorite: !item.favorite } : h))
+    )
+    void window.snap.setFavorite(item.name, !item.favorite)
+  }, [])
+
+  const deleteItem = useCallback(
+    async (item: HistoryItem) => {
+      const ok = await window.snap.deleteHistory(item.path)
+      showToast(ok ? 'Moved to Recycle Bin' : 'Delete failed')
+      // Only after a successful trash: step the viewer to a neighbour.
+      if (ok && viewerPath === item.path) {
+        const idx = visible.findIndex((h) => h.path === item.path)
+        const neighbour = visible[idx + 1] ?? visible[idx - 1] ?? null
+        setViewerPath(neighbour ? neighbour.path : null)
+      }
+      if (ok) refreshHistory()
+    },
+    [viewerPath, visible, refreshHistory, showToast]
+  )
+
+  const importFiles = useCallback(
+    async (paths?: string[]) => {
+      const n = await window.snap.importImages(paths)
+      if (n > 0) {
+        showToast(`Imported ${n} image${n > 1 ? 's' : ''}`)
+        refreshHistory()
+      }
+    },
+    [refreshHistory, showToast]
+  )
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setDropHint(false)
+      const paths = Array.from(e.dataTransfer.files)
+        .map((f) => window.snap.pathForFile(f))
+        .filter((p) => /\.(png|jpe?g|webp|bmp)$/i.test(p))
+      if (paths.length) void importFiles(paths)
+    },
+    [importFiles]
+  )
+
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div
+      className="flex h-screen flex-col bg-background text-foreground"
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (e.dataTransfer.types.includes('Files')) setDropHint(true)
+      }}
+      onDragLeave={() => setDropHint(false)}
+      onDrop={onDrop}
+    >
       {/* Top bar */}
       <header className="drag flex h-12 shrink-0 items-center justify-between border-b border-border/60 pl-4">
         <div className="flex items-center gap-2.5">
@@ -223,55 +321,212 @@ function App(): JSX.Element {
           ) : (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex shrink-0 items-center justify-between px-7 pb-3 pt-6">
-                <h2 className="text-sm font-semibold tracking-tight">Recent</h2>
-                <span className="text-xs text-muted-foreground">{history.length} in folder</span>
+                <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/40 p-0.5">
+                  <FilterTab active={!filterFav} onClick={() => setFilterFav(false)}>
+                    All · {history.length}
+                  </FilterTab>
+                  <FilterTab active={filterFav} onClick={() => setFilterFav(true)}>
+                    <Star
+                      className={cn('h-3 w-3', filterFav && 'fill-amber-400 text-amber-400')}
+                    />
+                    {favCount}
+                  </FilterTab>
+                </div>
+                <button
+                  onClick={() => void importFiles()}
+                  title="Add images from disk to annotate"
+                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  Add images
+                </button>
               </div>
-              <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto px-7 pb-7 xl:grid-cols-3">
-                {history.map((item) => (
-                  <button
-                    key={item.path}
-                    onClick={() =>
-                      item.type === 'video' ? setEditingVideo(item) : openInEditor(item.path)
-                    }
-                    title={`${item.name} — click to ${item.type === 'video' ? 'edit clip' : 'annotate'}`}
-                    className="group relative aspect-video overflow-hidden rounded-xl border border-border/70 bg-card shadow-lg shadow-black/30 transition-all hover:ring-2 hover:ring-primary/60"
-                  >
-                    {item.thumb ? (
-                      <img src={item.thumb} alt={item.name} className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center">
-                        {item.type === 'video' ? (
-                          <Video className="h-6 w-6 text-muted-foreground/40" />
-                        ) : (
-                          <ImageIcon className="h-6 w-6 text-muted-foreground/40" />
+              {visible.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                  <Star className="h-6 w-6 text-muted-foreground/40" />
+                  <p className="text-xs text-muted-foreground">
+                    No favorites yet — hover a capture and hit the star
+                  </p>
+                </div>
+              ) : (
+                <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto px-7 pb-7 xl:grid-cols-3">
+                  {visible.map((item) => (
+                    <div
+                      key={item.path}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setViewerPath(item.path)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') setViewerPath(item.path)
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        setCtxMenu({ x: e.clientX, y: e.clientY, item })
+                      }}
+                      title={`${item.name} — click to view`}
+                      className="group relative aspect-video cursor-pointer overflow-hidden rounded-xl border border-border/70 bg-card shadow-lg shadow-black/30 transition-all hover:ring-2 hover:ring-primary/60"
+                    >
+                      {item.thumb ? (
+                        <img src={item.thumb} alt={item.name} className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center">
+                          {item.type === 'video' ? (
+                            <Video className="h-6 w-6 text-muted-foreground/40" />
+                          ) : (
+                            <ImageIcon className="h-6 w-6 text-muted-foreground/40" />
+                          )}
+                        </div>
+                      )}
+                      {item.type === 'video' && (
+                        <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">
+                          <Play className="h-2.5 w-2.5 fill-current" /> Video
+                        </span>
+                      )}
+                      {/* Star: always visible when favorited, appears on hover otherwise */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleFavorite(item)
+                        }}
+                        title={item.favorite ? 'Unfavorite' : 'Favorite'}
+                        className={cn(
+                          'absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-black/55 backdrop-blur transition-all hover:bg-black/75',
+                          item.favorite ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                         )}
-                      </div>
-                    )}
-                    {item.type === 'video' && (
-                      <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">
-                        <Play className="h-2.5 w-2.5 fill-current" /> Video
+                      >
+                        <Star
+                          className={cn(
+                            'h-3.5 w-3.5',
+                            item.favorite ? 'fill-amber-400 text-amber-400' : 'text-white/80'
+                          )}
+                        />
+                      </button>
+                      <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+                        <span className="flex items-center gap-1.5 rounded-lg bg-popover/90 px-2.5 py-1.5 text-xs font-medium shadow-lg backdrop-blur">
+                          {item.type === 'video' ? (
+                            <>
+                              <Play className="h-3.5 w-3.5" /> View
+                            </>
+                          ) : (
+                            <>
+                              <ImageIcon className="h-3.5 w-3.5" /> View
+                            </>
+                          )}
+                        </span>
                       </span>
-                    )}
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
-                      <span className="flex items-center gap-1.5 rounded-lg bg-popover/90 px-2.5 py-1.5 text-xs font-medium shadow-lg backdrop-blur">
-                        {item.type === 'video' ? (
-                          <>
-                            <Scissors className="h-3.5 w-3.5" /> Edit clip
-                          </>
-                        ) : (
-                          <>
-                            <Pencil className="h-3.5 w-3.5" /> Annotate
-                          </>
-                        )}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </section>
       </main>
+
+      {/* Unmounted while an editor is open so its key handlers (Del, F, arrows,
+          Esc) can't fire while typing/annotating; remounts when the editor closes. */}
+      {viewerIndex >= 0 && !editing && !editingVideo && (
+        <GalleryViewer
+          items={visible}
+          index={viewerIndex}
+          onIndexChange={(i) => setViewerPath(visible[i]?.path ?? null)}
+          onClose={() => setViewerPath(null)}
+          onAnnotate={(item) => void openInEditor(item.path)}
+          onEditClip={(item) => setEditingVideo(item)}
+          onToggleFavorite={toggleFavorite}
+          onDelete={(item) => void deleteItem(item)}
+          showToast={showToast}
+        />
+      )}
+
+      {ctxMenu && (
+        <div
+          className="fixed z-50 min-w-[180px] overflow-hidden rounded-xl border border-border/70 bg-popover/95 py-1 shadow-2xl backdrop-blur"
+          style={{
+            left: Math.min(ctxMenu.x, window.innerWidth - 200),
+            top: Math.min(ctxMenu.y, window.innerHeight - 240)
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {ctxMenu.item.type === 'video' ? (
+            <CtxItem
+              icon={<Scissors className="h-3.5 w-3.5" />}
+              label="Edit clip"
+              onClick={() => {
+                setEditingVideo(ctxMenu.item)
+                setCtxMenu(null)
+              }}
+            />
+          ) : (
+            <CtxItem
+              icon={<Pencil className="h-3.5 w-3.5" />}
+              label="Annotate"
+              onClick={() => {
+                void openInEditor(ctxMenu.item.path)
+                setCtxMenu(null)
+              }}
+            />
+          )}
+          <CtxItem
+            icon={<Star className={cn('h-3.5 w-3.5', ctxMenu.item.favorite && 'fill-amber-400 text-amber-400')} />}
+            label={ctxMenu.item.favorite ? 'Unfavorite' : 'Favorite'}
+            onClick={() => {
+              toggleFavorite(ctxMenu.item)
+              setCtxMenu(null)
+            }}
+          />
+          <div className="my-1 h-px bg-border/60" />
+          <CtxItem
+            icon={<Copy className="h-3.5 w-3.5" />}
+            label={ctxMenu.item.type === 'video' ? 'Copy file' : 'Copy image'}
+            onClick={() => {
+              const it = ctxMenu.item
+              setCtxMenu(null)
+              void window.snap.copyFile(it.path).then((ok) => {
+                showToast(ok ? 'Copied to clipboard' : 'Copy failed')
+              })
+            }}
+          />
+          <CtxItem
+            icon={<Link2 className="h-3.5 w-3.5" />}
+            label="Copy path"
+            onClick={() => {
+              const it = ctxMenu.item
+              setCtxMenu(null)
+              void window.snap.copyPath(it.path).then(() => showToast('File path copied'))
+            }}
+          />
+          <CtxItem
+            icon={<FolderOpen className="h-3.5 w-3.5" />}
+            label="Show in folder"
+            onClick={() => {
+              void window.snap.showInFolder(ctxMenu.item.path)
+              setCtxMenu(null)
+            }}
+          />
+          <div className="my-1 h-px bg-border/60" />
+          <CtxItem
+            icon={<Trash2 className="h-3.5 w-3.5" />}
+            label="Delete"
+            danger
+            onClick={() => {
+              const it = ctxMenu.item
+              setCtxMenu(null)
+              void deleteItem(it)
+            }}
+          />
+        </div>
+      )}
+
+      {/* drag&drop import hint */}
+      {dropHint && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary/60 bg-card/60 px-10 py-8">
+            <ImagePlus className="h-8 w-8 text-primary" />
+            <p className="text-sm font-medium">Drop images to add them to SnapSki</p>
+          </div>
+        </div>
+      )}
 
       {showSettings && settings && (
         <SettingsPanel
@@ -293,6 +548,55 @@ function App(): JSX.Element {
         />
       )}
     </div>
+  )
+}
+
+function FilterTab({
+  active,
+  onClick,
+  children
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+        active ? 'bg-secondary text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function CtxItem({
+  icon,
+  label,
+  onClick,
+  danger = false
+}: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  danger?: boolean
+}): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium transition-colors',
+        danger
+          ? 'text-red-400 hover:bg-red-500/15 hover:text-red-300'
+          : 'text-foreground/85 hover:bg-accent hover:text-foreground'
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   )
 }
 

@@ -9,21 +9,29 @@ import {
   dialog,
   screen,
   nativeImage,
+  clipboard,
   protocol
 } from 'electron'
-import { join } from 'path'
-import { writeFile, readdir, stat } from 'fs/promises'
-import { createReadStream } from 'fs'
+import { join, resolve, sep } from 'path'
+import { writeFile, readdir, stat, copyFile } from 'fs/promises'
+import { createReadStream, existsSync } from 'fs'
 import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { loadSettings, saveSettings, ensureOutputFolder } from './settings'
 import { captureRegion, captureFullscreen, captureRectFast } from './capture'
 import { copyNativeImageToClipboard, copyFileToClipboard } from './clipboard'
 import { getForegroundWindowRectDip } from './winutil'
-import { videoThumbnail } from './thumbs'
+import { videoThumbnail, imageThumbnail } from './thumbs'
+import { isFavorite, setFavorite } from './favorites'
 import { exportVideo } from './videoedit'
 import * as recorder from './recorder'
-import type { CaptureResult, CaptureKind, Rect, VideoExportOpts } from '../shared/types'
+import type {
+  CaptureResult,
+  CaptureKind,
+  HistoryItem,
+  Rect,
+  VideoExportOpts
+} from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
@@ -76,9 +84,15 @@ function registerSnapProtocol(): void {
   protocol.handle('snap', async (request) => {
     // snap://media/<encodeURIComponent(absolutePath)>
     const url = new URL(request.url)
-    const filePath = decodeURIComponent(url.pathname).replace(/^\//, '')
+    // Normalize before checking so `..` segments can't escape the allowed roots,
+    // and compare with a trailing separator so `...\SnapSkiEvil` doesn't pass.
+    const filePath = resolve(decodeURIComponent(url.pathname).replace(/^\//, ''))
     const allowed = [loadSettings().outputFolder, app.getPath('temp'), app.getPath('pictures')]
-    const ok = allowed.some((dir) => filePath.toLowerCase().startsWith(dir.toLowerCase()))
+    const ok = allowed.some((dir) => {
+      const root = resolve(dir).toLowerCase()
+      const p = filePath.toLowerCase()
+      return p === root || p.startsWith(root.endsWith(sep) ? root : root + sep)
+    })
     if (!ok) return new Response('forbidden', { status: 403 })
 
     // Serve with byte-range support so <video> can seek. Without 206/Content-Range
@@ -250,6 +264,17 @@ function timestampName(prefix: string, ext: string): string {
   return `${prefix}_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(
     d.getHours()
   )}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.${ext}`
+}
+
+/** Timestamp name that doesn't collide with an existing file (multi-file imports). */
+function uniqueTimestampName(folder: string, prefix: string, ext: string): string {
+  const base = timestampName(prefix, ext)
+  if (!existsSync(join(folder, base))) return base
+  const stem = base.slice(0, -(ext.length + 1))
+  for (let i = 2; ; i++) {
+    const name = `${stem}_${i}.${ext}`
+    if (!existsSync(join(folder, name))) return name
+  }
 }
 
 async function finishCapture(image: Electron.NativeImage, notify = true): Promise<CaptureResult> {
@@ -492,8 +517,12 @@ function stopRecording(): void {
   recorder.stopRecording()
 }
 
+/** Hotkeys that failed to register (taken by another app) — surfaced in the UI. */
+let hotkeyFailures: string[] = []
+
 function registerHotkeys(): void {
   globalShortcut.unregisterAll()
+  hotkeyFailures = []
   const { hotkeys } = loadSettings()
   if (hotkeys.capture) {
     const ok = globalShortcut.register(hotkeys.capture, () => {
@@ -501,14 +530,18 @@ function registerHotkeys(): void {
       if (recorder.isRecording()) stopRecording()
       else showOverlay()
     })
-    if (!ok) console.error(`Failed to register hotkey: ${hotkeys.capture}`)
+    if (!ok) hotkeyFailures.push(hotkeys.capture)
   }
   // Dedicated instant-fullscreen hotkey (skip if it collides with the overlay key).
   if (hotkeys.fullscreen && hotkeys.fullscreen !== hotkeys.capture) {
     const ok = globalShortcut.register(hotkeys.fullscreen, () => {
       void instantFullscreen()
     })
-    if (!ok) console.error(`Failed to register hotkey: ${hotkeys.fullscreen}`)
+    if (!ok) hotkeyFailures.push(hotkeys.fullscreen)
+  }
+  if (hotkeyFailures.length) {
+    console.error('Failed to register hotkeys:', hotkeyFailures.join(', '))
+    mainWindow?.webContents.send('hotkeys:failed', hotkeyFailures)
   }
 }
 
@@ -586,19 +619,96 @@ function registerIpc(): void {
       )
       const items = stated.filter((x): x is NonNullable<typeof x> => x !== null)
       items.sort((a, b) => b.mtime - a.mtime)
-      return items.slice(0, 40).map((it) => {
-        let thumb: string | null = null
-        if (it.type === 'image') {
-          const img = nativeImage.createFromPath(it.path)
-          thumb = img.isEmpty() ? null : img.resize({ width: 320 }).toDataURL()
-        } else {
-          thumb = videoThumbnail(it.path, it.mtime)
-        }
-        return { ...it, thumb }
-      })
+      // Sequential on purpose: image decodes are sync CPU work on the main
+      // process, so yield to the event loop between items to keep the app
+      // responsive while a cold cache warms up (cached items are just reads).
+      const out: HistoryItem[] = []
+      for (const it of items.slice(0, 120)) {
+        const thumb =
+          it.type === 'image'
+            ? await imageThumbnail(it.path, it.mtime)
+            : await videoThumbnail(it.path, it.mtime)
+        out.push({ ...it, thumb, favorite: isFavorite(it.name) })
+        await new Promise(setImmediate)
+      }
+      return out
     } catch {
       return []
     }
+  })
+
+  // Gallery actions -----------------------------------------------------
+  ipcMain.handle('history:favorite', (_e, name: string, fav: boolean) => {
+    setFavorite(name, fav)
+  })
+  ipcMain.handle('history:delete', async (_e, p: string) => {
+    try {
+      await shell.trashItem(p)
+      return true
+    } catch (err) {
+      console.error('trash failed', err)
+      return false
+    }
+  })
+  ipcMain.handle('history:copyPath', (_e, p: string) => {
+    clipboard.writeText(p)
+  })
+  ipcMain.handle('history:copyFile', async (_e, p: string) => {
+    if (/\.png$/i.test(p)) {
+      // Images go on the clipboard as pixels — pastes anywhere.
+      const img = nativeImage.createFromPath(p)
+      if (!img.isEmpty()) {
+        copyNativeImageToClipboard(img)
+        return true
+      }
+    }
+    try {
+      await copyFileToClipboard(p)
+      return true
+    } catch (err) {
+      console.error('file copy failed', err)
+      return false
+    }
+  })
+  ipcMain.handle('history:showInFolder', (_e, p: string) => {
+    shell.showItemInFolder(p)
+  })
+
+  // Import external images into the SnapSki folder (Add button / drag&drop).
+  ipcMain.handle('history:import', async (_e, paths?: string[]) => {
+    let files = paths
+    if (!files || files.length === 0) {
+      const res = await dialog.showOpenDialog(mainWindow ?? undefined!, {
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }]
+      })
+      if (res.canceled) return 0
+      files = res.filePaths
+    }
+    const settings = loadSettings()
+    ensureOutputFolder(settings.outputFolder)
+    let imported = 0
+    for (const src of files) {
+      if (!/\.(png|jpe?g|webp|bmp)$/i.test(src)) continue
+      try {
+        const dest = join(
+          settings.outputFolder,
+          uniqueTimestampName(settings.outputFolder, 'Import', 'png')
+        )
+        // Non-PNG sources are converted so the whole pipeline stays PNG.
+        if (/\.png$/i.test(src)) {
+          await copyFile(src, dest)
+        } else {
+          const img = nativeImage.createFromPath(src)
+          if (img.isEmpty()) continue
+          await writeFile(dest, img.toPNG())
+        }
+        imported++
+      } catch (err) {
+        console.error('import failed for', src, err)
+      }
+    }
+    return imported
   })
 
   // Video editing: trim and/or static region blur → re-save + file-drop copy
@@ -688,6 +798,9 @@ function registerIpc(): void {
   // Recording control from the renderer
   ipcMain.handle('record:stop', () => stopRecording())
   ipcMain.handle('record:state', () => ({ active: recorder.isRecording() }))
+
+  // Hotkeys that couldn't be registered (renderer polls once on load).
+  ipcMain.handle('hotkeys:failures', () => hotkeyFailures)
 }
 
 app.whenReady().then(() => {

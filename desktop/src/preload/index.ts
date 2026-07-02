@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AppSettings,
@@ -22,9 +22,27 @@ const api = {
   // capture trigger (from main UI button)
   triggerCapture: (): Promise<void> => ipcRenderer.invoke('capture:trigger'),
 
-  // history
+  // history / gallery
   listHistory: (): Promise<HistoryItem[]> => ipcRenderer.invoke('history:list'),
   openHistory: (path: string): Promise<CaptureResult> => ipcRenderer.invoke('history:open', path),
+  setFavorite: (name: string, fav: boolean): Promise<void> =>
+    ipcRenderer.invoke('history:favorite', name, fav),
+  deleteHistory: (path: string): Promise<boolean> => ipcRenderer.invoke('history:delete', path),
+  copyPath: (path: string): Promise<void> => ipcRenderer.invoke('history:copyPath', path),
+  copyFile: (path: string): Promise<boolean> => ipcRenderer.invoke('history:copyFile', path),
+  showInFolder: (path: string): Promise<void> => ipcRenderer.invoke('history:showInFolder', path),
+  importImages: (paths?: string[]): Promise<number> =>
+    ipcRenderer.invoke('history:import', paths),
+  /** Absolute path for a File dropped onto the window (drag&drop import). */
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  // hotkeys that failed to register (taken by another app)
+  getHotkeyFailures: (): Promise<string[]> => ipcRenderer.invoke('hotkeys:failures'),
+  onHotkeysFailed: (cb: (keys: string[]) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, keys: string[]): void => cb(keys)
+    ipcRenderer.on('hotkeys:failed', listener)
+    return () => ipcRenderer.removeListener('hotkeys:failed', listener)
+  },
 
   // video editing
   mediaUrl: (path: string): string => `snap://media/${encodeURIComponent(path)}`,

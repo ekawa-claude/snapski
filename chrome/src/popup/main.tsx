@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Camera, ScrollText, Loader2, Pencil, Settings } from 'lucide-react'
+import { Camera, ScrollText, Loader2, Pencil, Settings, Crop } from 'lucide-react'
 import '../editor/index.css'
 
 type Mode = 'visible' | 'full'
@@ -8,6 +8,19 @@ type Mode = 'visible' | 'full'
 function Popup(): JSX.Element {
   const [busy, setBusy] = useState<Mode | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  /** Region selection runs in the page's content script — hand off and close. */
+  const startRegion = async (): Promise<void> => {
+    setError(null)
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.id) throw new Error('No active tab')
+      await chrome.tabs.sendMessage(tab.id, { type: 'snapski-start-region' })
+      window.close()
+    } catch {
+      setError("Can't select a region on this page (reload it and try again)")
+    }
+  }
 
   const capture = async (mode: Mode): Promise<void> => {
     setError(null)
@@ -54,6 +67,20 @@ function Popup(): JSX.Element {
           <span>
             <span className="block text-sm font-medium">Visible area</span>
             <span className="block text-[11px] text-muted-foreground">What you see now</span>
+          </span>
+        </button>
+
+        <button
+          onClick={() => startRegion()}
+          disabled={busy != null}
+          className="group flex items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/60 hover:bg-accent disabled:opacity-50"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-foreground group-hover:bg-primary group-hover:text-primary-foreground">
+            <Crop className="h-4 w-4" />
+          </span>
+          <span>
+            <span className="block text-sm font-medium">Region</span>
+            <span className="block text-[11px] text-muted-foreground">Drag to select an area</span>
           </span>
         </button>
 

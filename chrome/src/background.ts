@@ -87,14 +87,25 @@ async function captureFullPage(tab: chrome.tabs.Tab): Promise<string> {
   })) as { result: PageMetrics }[]
 
   const shots: { y: number; dataUrl: string }[] = []
+  let lastY = -1
   for (let y = 0; y < m.totalH; y += m.viewH) {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: (yy: number) => window.scrollTo(0, yy),
+      // behavior:'instant' overrides CSS scroll-behavior:smooth animations.
+      func: (yy: number) => window.scrollTo({ top: yy, left: 0, behavior: 'instant' }),
       args: [y]
     })
     await sleep(CAPTURE_DELAY_MS)
-    shots.push({ y, dataUrl: await captureVisible(tab) })
+    // The last scroll clamps at the page bottom: stitch by the position the page
+    // actually reached, not the one we asked for, or the bottom band duplicates.
+    const [{ result: actualY }] = (await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => window.scrollY
+    })) as { result: number }[]
+    const ay = typeof actualY === 'number' ? actualY : y
+    if (ay <= lastY) break // scroll didn't advance — we're at the bottom
+    shots.push({ y: ay, dataUrl: await captureVisible(tab) })
+    lastY = ay
   }
 
   // Restore the user's original scroll position.

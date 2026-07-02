@@ -27,7 +27,8 @@ const history: HistoryItem[] = [0, 1, 2, 3, 4].map((i) => ({
   name: i === 1 ? 'Rec_clip.mp4' : `Snap_${i}.png`,
   mtime: Date.now() - i * 1000,
   type: i === 1 ? 'video' : 'image',
-  thumb: swatchImg(i === 1 ? `Clip ${i}` : `Snap ${i}`, i * 60)
+  thumb: swatchImg(i === 1 ? `Clip ${i}` : `Snap ${i}`, i * 60),
+  favorite: i === 2
 }))
 
 let captureCb: ((r: CaptureResult) => void) | null = null
@@ -58,6 +59,23 @@ const mock = {
   openFolder: async () => {},
   triggerCapture: async () => {},
   listHistory: async () => history,
+  setFavorite: async (name: string, fav: boolean) => {
+    const it = history.find((h) => h.name === name)
+    if (it) it.favorite = fav
+  },
+  deleteHistory: async (path: string) => {
+    const i = history.findIndex((h) => h.path === path)
+    if (i >= 0) history.splice(i, 1)
+    return true
+  },
+  copyPath: async () => {},
+  copyFile: async () => true,
+  showInFolder: async () => {},
+  importImages: async () => 0,
+  pathForFile: (f: File) => f.name,
+  getHotkeyFailures: async () => [],
+  onHotkeysFailed: () => () => {},
+  onHistoryChanged: () => () => {},
   mediaUrl: (path: string) => path,
   exportVideo: async () => ({ ok: true, path: 'C:/test/Clip.mp4' }),
   onVideoProgress: () => () => {},
