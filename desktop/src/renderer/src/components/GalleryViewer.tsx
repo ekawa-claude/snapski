@@ -51,11 +51,48 @@ export function GalleryViewer({
   const isFullRef = useRef(false)
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
 
-  const setFullScreen = useCallback(async (on: boolean): Promise<void> => {
-    const state = await window.snap.winSetFullScreen(on)
-    isFullRef.current = state
-    setIsFull(state)
+  // Immersive fullscreen: the chrome (bars, chevrons, cursor) fades out after a
+  // moment of mouse inactivity — like a video player — so only the shot remains.
+  const [uiVisible, setUiVisible] = useState(true)
+  const hideTimer = useRef<number | undefined>(undefined)
+  const overBarsRef = useRef(false)
+
+  const pokeUi = useCallback(() => {
+    setUiVisible(true)
+    window.clearTimeout(hideTimer.current)
+    if (isFullRef.current && !overBarsRef.current) {
+      hideTimer.current = window.setTimeout(() => setUiVisible(false), 2000)
+    }
   }, [])
+
+  // Don't fade the bars away under a cursor that is resting on them.
+  const barHoverProps = {
+    onMouseEnter: (): void => {
+      overBarsRef.current = true
+      window.clearTimeout(hideTimer.current)
+      setUiVisible(true)
+    },
+    onMouseLeave: (): void => {
+      overBarsRef.current = false
+      pokeUi()
+    }
+  }
+
+  useEffect(() => () => window.clearTimeout(hideTimer.current), [])
+
+  const setFullScreen = useCallback(
+    async (on: boolean): Promise<void> => {
+      const state = await window.snap.winSetFullScreen(on)
+      isFullRef.current = state
+      setIsFull(state)
+      if (state) pokeUi()
+      else {
+        window.clearTimeout(hideTimer.current)
+        setUiVisible(true)
+      }
+    },
+    [pokeUi]
+  )
 
   // Leaving the viewer (close, or the editor replacing it) restores the window.
   useEffect(() => {
@@ -128,10 +165,23 @@ export function GalleryViewer({
     showToast('File path copied to clipboard')
   }
 
+  const chromeHidden = isFull && !uiVisible
+
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-black/95 backdrop-blur-sm">
+    <div
+      className="absolute inset-0 z-40 flex flex-col bg-black/95 backdrop-blur-sm"
+      onMouseMove={pokeUi}
+    >
       {/* Top bar */}
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
+      <header
+        {...barHoverProps}
+        className={cn(
+          'flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4 transition-opacity duration-300',
+          isFull &&
+            'absolute inset-x-0 top-0 z-20 border-transparent bg-gradient-to-b from-black/80 via-black/40 to-transparent',
+          chromeHidden && 'pointer-events-none opacity-0'
+        )}
+      >
         <div className="flex min-w-0 items-center gap-3">
           <span className="truncate text-sm font-medium text-white/90">{item.name}</span>
           <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] tabular-nums text-white/60">
@@ -184,7 +234,8 @@ export function GalleryViewer({
             }}
             className={cn(
               'max-h-full max-w-full select-none object-contain',
-              zoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
+              zoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in',
+              chromeHidden && 'cursor-none'
             )}
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
@@ -195,26 +246,39 @@ export function GalleryViewer({
 
         {/* Nav chevrons */}
         {index > 0 && (
-          <NavBtn side="left" onClick={prev}>
+          <NavBtn side="left" onClick={prev} hidden={chromeHidden}>
             <ChevronLeft className="h-6 w-6" />
           </NavBtn>
         )}
         {index < items.length - 1 && (
-          <NavBtn side="right" onClick={next}>
+          <NavBtn side="right" onClick={next} hidden={chromeHidden}>
             <ChevronRight className="h-6 w-6" />
           </NavBtn>
         )}
 
         {/* Zoom indicator */}
         {!isVideo && zoom > 1 && (
-          <span className="absolute bottom-4 right-4 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium tabular-nums text-white/80 backdrop-blur">
+          <span
+            className={cn(
+              'absolute bottom-4 right-4 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium tabular-nums text-white/80 backdrop-blur transition-opacity duration-300',
+              chromeHidden && 'opacity-0'
+            )}
+          >
             {Math.round(zoom * 100)}%
           </span>
         )}
       </div>
 
       {/* Bottom toolbar */}
-      <footer className="flex h-14 shrink-0 items-center justify-center gap-1.5 border-t border-white/10 px-4">
+      <footer
+        {...barHoverProps}
+        className={cn(
+          'flex h-14 shrink-0 items-center justify-center gap-1.5 border-t border-white/10 px-4 transition-opacity duration-300',
+          isFull &&
+            'absolute inset-x-0 bottom-0 z-20 border-transparent bg-gradient-to-t from-black/80 via-black/40 to-transparent',
+          chromeHidden && 'pointer-events-none opacity-0'
+        )}
+      >
         {isVideo ? (
           <ToolBtn label="Edit clip" onClick={() => onEditClip(item)}>
             <Scissors className="h-4 w-4" />
@@ -295,10 +359,12 @@ function ViewerBtn({
 function NavBtn({
   side,
   onClick,
+  hidden = false,
   children
 }: {
   side: 'left' | 'right'
   onClick: () => void
+  hidden?: boolean
   children: React.ReactNode
 }): JSX.Element {
   return (
@@ -306,7 +372,8 @@ function NavBtn({
       onClick={onClick}
       className={cn(
         'absolute top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white/80 backdrop-blur transition-all hover:bg-black/70 hover:text-white',
-        side === 'left' ? 'left-4' : 'right-4'
+        side === 'left' ? 'left-4' : 'right-4',
+        hidden && 'pointer-events-none opacity-0'
       )}
     >
       {children}
