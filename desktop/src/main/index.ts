@@ -24,6 +24,7 @@ import { getForegroundWindowRectDip } from './winutil'
 import { videoThumbnail, imageThumbnail } from './thumbs'
 import { isFavorite, setFavorite } from './favorites'
 import { exportVideo } from './videoedit'
+import { initUpdater } from './updater'
 import * as recorder from './recorder'
 import type {
   CaptureResult,
@@ -820,6 +821,7 @@ app.whenReady().then(() => {
   createMainWindow()
   createTray()
   registerHotkeys()
+  initUpdater(() => mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

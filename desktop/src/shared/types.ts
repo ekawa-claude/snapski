@@ -2,6 +2,15 @@
 
 export type CaptureKind = 'region' | 'fullscreen' | 'window'
 
+/** Auto-update lifecycle, pushed from main → renderer via `update:status`. */
+export type UpdateStatus =
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'none' }
+  | { state: 'progress'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string }
+
 export interface Rect {
   x: number
   y: number

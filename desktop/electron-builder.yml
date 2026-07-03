@@ -20,12 +20,29 @@ extraResources:
 win:
   icon: build/icon.ico
   target:
+    - target: nsis
+      arch:
+        - x64
     - target: zip
       arch:
         - x64
-    - target: portable
-      arch:
-        - x64
   artifactName: ${productName}-${version}.${ext}
-portable:
-  artifactName: ${productName}-${version}-portable.${ext}
+# Sleek one-click, per-user install (no UAC, no dir prompt) — Discord-style.
+# Auto-launches on finish; auto-update replaces it in place afterwards.
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: SnapSki
+  artifactName: ${productName}-Setup-${version}.${ext}
+# Auto-update feed (electron-updater reads this at build → app-update.yml).
+publish:
+  provider: generic
+  url: https://chat.wishly.wtf/snapski/

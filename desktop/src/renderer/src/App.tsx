@@ -15,7 +15,8 @@ import {
   Square,
   CircleDot,
   Play,
-  Scissors
+  Scissors,
+  RefreshCw
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -45,6 +46,7 @@ function App(): JSX.Element {
   const [viewerPath, setViewerPath] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
   const [dropHint, setDropHint] = useState(false)
+  const [updateReady, setUpdateReady] = useState<string | null>(null)
 
   const mode: CaptureMode = settings?.captureMode ?? 'screenshot'
 
@@ -105,12 +107,21 @@ function App(): JSX.Element {
     }
     window.snap.getHotkeyFailures().then(warnHotkeys)
     const offHotkeys = window.snap.onHotkeysFailed(warnHotkeys)
+    // Auto-update: only the "downloaded" state is actionable — surface a
+    // restart affordance; everything else happens silently in the background.
+    const offUpdate = window.snap.onUpdateStatus((s) => {
+      if (s.state === 'downloaded') {
+        setUpdateReady(s.version)
+        showToast(`Update ${s.version} ready — restart to apply`)
+      }
+    })
     return () => {
       offCapture()
       offHistory()
       offRecState()
       offRecDone()
       offHotkeys()
+      offUpdate()
     }
   }, [refreshHistory, showToast])
 
@@ -212,6 +223,16 @@ function App(): JSX.Element {
           <span className="text-sm font-semibold tracking-tight">SnapSki</span>
         </div>
         <div className="flex items-center">
+          {updateReady && (
+            <button
+              onClick={() => void window.snap.installUpdate()}
+              title={`Restart to update to ${updateReady}`}
+              className="no-drag mr-2 flex items-center gap-1.5 rounded-lg bg-primary/15 px-2.5 py-1.5 text-xs font-medium text-primary ring-1 ring-primary/30 transition-colors hover:bg-primary/25"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Restart to update
+            </button>
+          )}
           <Button
             variant="ghost"
             size="icon"

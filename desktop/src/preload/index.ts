@@ -7,6 +7,7 @@ import type {
   RecordingResult,
   RecordingState,
   Rect,
+  UpdateStatus,
   VideoExportOpts,
   VideoExportResult
 } from '../shared/types'
@@ -57,6 +58,15 @@ const api = {
   // editor export
   exportImage: (dataUrl: string): Promise<CaptureResult> =>
     ipcRenderer.invoke('image:export', dataUrl),
+
+  // auto-update
+  onUpdateStatus: (cb: (s: UpdateStatus) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: UpdateStatus): void => cb(s)
+    ipcRenderer.on('update:status', listener)
+    return () => ipcRenderer.removeListener('update:status', listener)
+  },
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),
 
   // window controls
   winMinimize: (): Promise<void> => ipcRenderer.invoke('win:minimize'),

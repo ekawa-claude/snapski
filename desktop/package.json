@@ -1,6 +1,6 @@
 {
   "name": "snapski",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SnapSki — a fast, modern Windows screen-capture tool",
   "main": "./out/main/index.js",
   "author": "Artur",
@@ -19,6 +19,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
+    "electron-updater": "^6.8.9",
     "fabric": "^6.9.1",
     "ffmpeg-static": "^5.2.0"
   },
