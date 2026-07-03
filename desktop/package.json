@@ -1,6 +1,6 @@
 {
   "name": "snapski",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "SnapSki — a fast, modern Windows screen-capture tool",
   "main": "./out/main/index.js",
   "author": "Artur",
