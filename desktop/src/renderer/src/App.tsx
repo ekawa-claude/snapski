@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   Camera,
   Settings as SettingsIcon,
@@ -55,8 +55,14 @@ function App(): JSX.Element {
   const favCount = useMemo(() => history.filter((h) => h.favorite).length, [history])
   const viewerIndex = viewerPath ? visible.findIndex((h) => h.path === viewerPath) : -1
 
+  // Latest filter state, readable from the (never re-created) capture handler.
+  const filterFavRef = useRef(filterFav)
+  filterFavRef.current = filterFav
+
   const refreshHistory = useCallback(async () => {
-    setHistory(await window.snap.listHistory())
+    const list = await window.snap.listHistory()
+    setHistory(list)
+    return list
   }, [])
 
   const showToast = useCallback((msg: string) => {
@@ -68,14 +74,23 @@ function App(): JSX.Element {
     window.snap.getSettings().then(setSettings)
     window.snap.getRecordState().then((s) => setRecording(s.active))
     refreshHistory()
-    const offCapture = window.snap.onCaptureDone((r) => {
+    const offCapture = window.snap.onCaptureDone(async (r) => {
       setFlash(true)
       setTimeout(() => setFlash(false), 450)
       showToast(`Copied to clipboard & saved · ${r.width}×${r.height}`)
       // a new capture supersedes whatever was being edited
       setEditing(null)
       setEditingVideo(null)
-      refreshHistory()
+      const list = await refreshHistory()
+      // If the gallery viewer was already open, follow the fresh shot; if it
+      // wasn't (we're on the home screen), stay put. Only follow when the new
+      // capture is actually in the current filter, so the fav tab doesn't blank.
+      if (r.savedPath) {
+        const inView = (filterFavRef.current ? list.filter((h) => h.favorite) : list).some(
+          (h) => h.path === r.savedPath
+        )
+        setViewerPath((prev) => (prev && inView ? r.savedPath : prev))
+      }
     })
     // Instant fullscreen: refresh the grid in place, without raising the window.
     const offHistory = window.snap.onHistoryChanged(() => refreshHistory())
