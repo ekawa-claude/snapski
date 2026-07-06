@@ -4,5 +4,10 @@
 # broad matcher swallowed unrelated routes).
 
 handle_path /snapski-hub/* {
-    reverse_proxy 127.0.0.1:8790
+    # flush_interval -1 disables response buffering so the /events SSE stream
+    # reaches clients immediately (Caddy usually auto-detects text/event-stream,
+    # but we set it explicitly to be safe).
+    reverse_proxy 127.0.0.1:8790 {
+        flush_interval -1
+    }
 }

@@ -15,6 +15,7 @@ Deploy: see README.md. Runs standalone from firefly — own venv, own systemd un
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 DATA_DIR = Path(os.environ.get("SNAPSKI_HUB_DATA", "./data")).resolve()
 DB_PATH = DATA_DIR / "hub.sqlite3"
@@ -35,7 +36,22 @@ GROUP_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
 CHANGES_LIMIT = 200
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024  # a single PNG shot; sanity ceiling
 
-app = FastAPI(title="SnapSki Hub", version="1.0")
+app = FastAPI(title="SnapSki Hub", version="1.1")
+
+# In-memory SSE fan-out: group_id -> set of per-connection asyncio queues.
+# Works because the hub runs a single uvicorn worker (see snapski-hub.service).
+# Push-only hint: a "changed" ping tells clients to run their normal /changes
+# pull. If we ever scale to multiple workers this must move to a shared bus.
+_subscribers: dict[str, set[asyncio.Queue]] = {}
+
+
+def _notify(group_id: str) -> None:
+    """Wake every live /events listener for this group."""
+    for q in list(_subscribers.get(group_id, ())):
+        try:
+            q.put_nowait("changed")
+        except asyncio.QueueFull:
+            pass  # a client that's already behind will catch up on its next pull
 
 
 # --------------------------------------------------------------------------- db
@@ -233,6 +249,7 @@ async def upload_shot(
             "VALUES (?,?,?,?,?,?,?)",
             (group_id, "shot", shot_id, None, m.get("createdAt"), meta_clean, now),
         )
+        _notify(group_id)
         return {"seq": cur.lastrowid, "shot_id": shot_id, "deduped": False}
 
 
@@ -281,6 +298,7 @@ async def post_op(request: Request, group_id: str = Depends(require_group)):
             "VALUES (?,?,?,?,?,?,?)",
             (group_id, kind, shot_id, value, ts, None, now),
         )
+        _notify(group_id)
         return {"seq": cur.lastrowid}
 
 
@@ -328,6 +346,42 @@ def shot_file(shot_id: str, group_id: str = Depends(require_group)):
     if not fp.exists():
         raise HTTPException(404, "shot not found")
     return FileResponse(fp, media_type="image/png")
+
+
+@app.get("/events")
+async def events(request: Request, group_id: str = Depends(require_group)):
+    """SSE stream: emits `data: changed` whenever this group gets a new shot/op.
+
+    Clients react by running their normal `GET /changes` pull. A heartbeat
+    comment every 25s keeps intermediary proxies from closing an idle stream.
+    Auth is the same Bearer header as everything else (set by fetch/okhttp).
+    """
+    q: asyncio.Queue = asyncio.Queue(maxsize=8)
+    _subscribers.setdefault(group_id, set()).add(q)
+
+    async def gen():
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {msg}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                if await request.is_disconnected():
+                    break
+        finally:
+            subs = _subscribers.get(group_id)
+            if subs is not None:
+                subs.discard(q)
+                if not subs:
+                    _subscribers.pop(group_id, None)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.exception_handler(HTTPException)
