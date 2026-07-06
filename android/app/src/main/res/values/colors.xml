@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="snapski_bg">#FF14161A</color>
-    <color name="snapski_accent">#FF4F8CFF</color>
+    <!-- Matches the desktop app's shadcn palette: bg hsl(240 10% 4%), primary hsl(246 80% 66%) -->
+    <color name="snapski_bg">#FF09090B</color>
+    <color name="snapski_accent">#FF7163EE</color>
 </resources>

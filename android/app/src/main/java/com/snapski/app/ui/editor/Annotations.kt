@@ -30,6 +30,45 @@ sealed interface Ann {
     data class Blur(val rect: Rect, val pixels: Bitmap) : Ann
 }
 
+/** Returns a copy of the annotation shifted by (dx, dy) in image space. */
+fun Ann.translated(dx: Float, dy: Float): Ann = when (this) {
+    is Ann.Pen -> copy(points = points.map { (x, y) -> (x + dx) to (y + dy) })
+    is Ann.Arrow -> copy(x1 = x1 + dx, y1 = y1 + dy, x2 = x2 + dx, y2 = y2 + dy)
+    is Ann.Box -> copy(x1 = x1 + dx, y1 = y1 + dy, x2 = x2 + dx, y2 = y2 + dy)
+    is Ann.Note -> copy(x = x + dx, y = y + dy)
+    is Ann.Blur -> copy(rect = Rect(rect).apply { offset(dx.toInt(), dy.toInt()) })
+}
+
+/** Image-space bounding box, used for hit-testing and the selection outline. */
+fun Ann.bounds(): RectF = when (this) {
+    is Ann.Pen -> {
+        val xs = points.map { it.first }
+        val ys = points.map { it.second }
+        RectF(
+            (xs.minOrNull() ?: 0f) - width, (ys.minOrNull() ?: 0f) - width,
+            (xs.maxOrNull() ?: 0f) + width, (ys.maxOrNull() ?: 0f) + width,
+        )
+    }
+    is Ann.Arrow -> RectF(
+        min(x1, x2) - width, min(y1, y2) - width,
+        max(x1, x2) + width, max(y1, y2) + width,
+    )
+    is Ann.Box -> RectF(
+        min(x1, x2) - width, min(y1, y2) - width,
+        max(x1, x2) + width, max(y1, y2) + width,
+    )
+    is Ann.Note -> {
+        val paint = Paint().apply { textSize = size; isFakeBoldText = true }
+        val lines = text.split("\n")
+        val w = lines.maxOf { paint.measureText(it) }
+        RectF(x, y - size, x + w, y + (lines.size - 1) * size * 1.2f + size * 0.3f)
+    }
+    is Ann.Blur -> RectF(rect)
+}
+
+fun Ann.hit(x: Float, y: Float, slop: Float): Boolean =
+    RectF(bounds()).apply { inset(-slop, -slop) }.contains(x, y)
+
 /** Renders one annotation onto an image-space android canvas (shared by preview and flatten). */
 fun Canvas.drawAnn(a: Ann) {
     when (a) {

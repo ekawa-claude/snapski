@@ -30,7 +30,9 @@ import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TextFields
@@ -76,12 +78,14 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-private enum class Tool { CROP, PEN, ARROW, BOX, TEXT, BLUR }
+private enum class Tool { SELECT, CROP, PEN, ARROW, BOX, TEXT, BLUR }
 
 private val palette = listOf(
     0xFFFF3B30.toInt(), 0xFFFFCC00.toInt(), 0xFF34C759.toInt(),
-    0xFF4F8CFF.toInt(), 0xFFFFFFFF.toInt(), 0xFF000000.toInt(),
+    0xFF7163EE.toInt(), 0xFFFFFFFF.toInt(), 0xFF000000.toInt(),
 )
+
+private data class Fit(val scale: Float, val dx: Float, val dy: Float)
 
 private class EditorState(first: Bitmap) {
     var bitmap by mutableStateOf(first)
@@ -130,6 +134,7 @@ fun EditorScreen(
     var color by remember { mutableStateOf(palette[0]) }
     var widthLevel by remember { mutableStateOf(1) } // 0..2
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    var selected by remember { mutableStateOf<Int?>(null) }
 
     // in-progress gesture, image space
     var penPoints by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
@@ -142,22 +147,39 @@ fun EditorScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val maxDim = max(state.bitmap.width, state.bitmap.height).toFloat()
-    val strokeWidth = maxDim / 300f * listOf(1f, 2f, 3.5f)[widthLevel]
-    val textSize = maxDim / 36f * listOf(0.75f, 1f, 1.5f)[widthLevel]
+    // All of these read snapshot state, so gesture handlers get fresh values even
+    // though pointerInput only restarts when its keys change.
+    fun fit(): Fit {
+        val vs = viewSize
+        if (vs == IntSize.Zero) return Fit(1f, 0f, 0f)
+        val s = min(
+            vs.width / state.bitmap.width.toFloat(),
+            vs.height / state.bitmap.height.toFloat(),
+        )
+        return Fit(
+            s,
+            (vs.width - state.bitmap.width * s) / 2f,
+            (vs.height - state.bitmap.height * s) / 2f,
+        )
+    }
 
-    // fit transform: image space -> view space
-    val scale = if (viewSize == IntSize.Zero) 1f else min(
-        viewSize.width / state.bitmap.width.toFloat(),
-        viewSize.height / state.bitmap.height.toFloat(),
-    )
-    val dx = (viewSize.width - state.bitmap.width * scale) / 2f
-    val dy = (viewSize.height - state.bitmap.height * scale) / 2f
+    fun toImage(p: Offset): Offset {
+        val f = fit()
+        return Offset(
+            ((p.x - f.dx) / f.scale).coerceIn(0f, state.bitmap.width.toFloat()),
+            ((p.y - f.dy) / f.scale).coerceIn(0f, state.bitmap.height.toFloat()),
+        )
+    }
 
-    fun toImage(p: Offset) = Offset(
-        ((p.x - dx) / scale).coerceIn(0f, state.bitmap.width.toFloat()),
-        ((p.y - dy) / scale).coerceIn(0f, state.bitmap.height.toFloat()),
-    )
+    fun strokeWidthNow(): Float {
+        val maxDim = max(state.bitmap.width, state.bitmap.height).toFloat()
+        return maxDim / 300f * listOf(1f, 2f, 3.5f)[widthLevel]
+    }
+
+    fun textSizeNow(): Float {
+        val maxDim = max(state.bitmap.width, state.bitmap.height).toFloat()
+        return maxDim / 36f * listOf(0.75f, 1f, 1.5f)[widthLevel]
+    }
 
     fun dragRect(): Rect? {
         val s = dragStart ?: return null
@@ -175,19 +197,19 @@ fun EditorScreen(
         when (tool) {
             Tool.PEN -> if (penPoints.size > 1) {
                 state.push()
-                state.anns = state.anns + Ann.Pen(penPoints, color, strokeWidth)
+                state.anns = state.anns + Ann.Pen(penPoints, color, strokeWidthNow())
             }
             Tool.ARROW -> if (s != null && e != null &&
                 (abs(e.x - s.x) > 8 || abs(e.y - s.y) > 8)
             ) {
                 state.push()
-                state.anns = state.anns + Ann.Arrow(s.x, s.y, e.x, e.y, color, strokeWidth)
+                state.anns = state.anns + Ann.Arrow(s.x, s.y, e.x, e.y, color, strokeWidthNow())
             }
             Tool.BOX -> dragRect()?.let { r ->
                 state.push()
                 state.anns = state.anns + Ann.Box(
                     r.left.toFloat(), r.top.toFloat(),
-                    r.right.toFloat(), r.bottom.toFloat(), color, strokeWidth,
+                    r.right.toFloat(), r.bottom.toFloat(), color, strokeWidthNow(),
                 )
             }
             Tool.BLUR -> dragRect()?.let { r ->
@@ -197,9 +219,15 @@ fun EditorScreen(
                 state.anns = state.anns + Ann.Blur(r, pixelate(basis, r))
             }
             Tool.CROP -> cropRect = dragRect()
-            Tool.TEXT -> {}
+            Tool.TEXT, Tool.SELECT -> {}
         }
         penPoints = emptyList(); dragStart = null; dragEnd = null
+    }
+
+    fun switchTool(t: Tool) {
+        tool = t
+        selected = null
+        if (t == Tool.CROP) cropRect = null
     }
 
     Scaffold(
@@ -212,12 +240,28 @@ fun EditorScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { state.undo() }, enabled = state.undoStack.isNotEmpty()) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
+                    val sel = selected
+                    if (sel != null && sel < state.anns.size) {
+                        IconButton(onClick = {
+                            state.push()
+                            state.anns = state.anns.filterIndexed { i, _ -> i != sel }
+                            selected = null
+                        }) {
+                            Icon(
+                                Icons.Default.Delete,
+                                tint = MaterialTheme.colorScheme.error,
+                                contentDescription = "Delete selected",
+                            )
+                        }
                     }
-                    IconButton(onClick = { state.redo() }, enabled = state.redoStack.isNotEmpty()) {
-                        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo")
-                    }
+                    IconButton(
+                        onClick = { state.undo(); selected = null },
+                        enabled = state.undoStack.isNotEmpty(),
+                    ) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
+                    IconButton(
+                        onClick = { state.redo(); selected = null },
+                        enabled = state.redoStack.isNotEmpty(),
+                    ) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
                     IconButton(onClick = {
                         scope.launch(Dispatchers.IO) {
                             val out = flatten(state.bitmap, state.anns)
@@ -272,7 +316,7 @@ fun EditorScreen(
                         }) { Text("Apply crop") }
                     }
                 }
-                if (tool != Tool.CROP) {
+                if (tool != Tool.CROP && tool != Tool.SELECT) {
                     Row(
                         Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -317,14 +361,13 @@ fun EditorScreen(
                         .padding(vertical = 4.dp),
                     horizontalArrangement = Arrangement.Center,
                 ) {
-                    ToolButton(Icons.Default.Edit, "Pen", tool == Tool.PEN) { tool = Tool.PEN }
-                    ToolButton(Icons.Default.NorthEast, "Arrow", tool == Tool.ARROW) { tool = Tool.ARROW }
-                    ToolButton(Icons.Default.CropSquare, "Box", tool == Tool.BOX) { tool = Tool.BOX }
-                    ToolButton(Icons.Default.TextFields, "Text", tool == Tool.TEXT) { tool = Tool.TEXT }
-                    ToolButton(Icons.Default.BlurOn, "Blur", tool == Tool.BLUR) { tool = Tool.BLUR }
-                    ToolButton(Icons.Default.Crop, "Crop", tool == Tool.CROP) {
-                        tool = Tool.CROP; cropRect = null
-                    }
+                    ToolButton(Icons.Default.NearMe, "Move", tool == Tool.SELECT) { switchTool(Tool.SELECT) }
+                    ToolButton(Icons.Default.Edit, "Pen", tool == Tool.PEN) { switchTool(Tool.PEN) }
+                    ToolButton(Icons.Default.NorthEast, "Arrow", tool == Tool.ARROW) { switchTool(Tool.ARROW) }
+                    ToolButton(Icons.Default.CropSquare, "Box", tool == Tool.BOX) { switchTool(Tool.BOX) }
+                    ToolButton(Icons.Default.TextFields, "Text", tool == Tool.TEXT) { switchTool(Tool.TEXT) }
+                    ToolButton(Icons.Default.BlurOn, "Blur", tool == Tool.BLUR) { switchTool(Tool.BLUR) }
+                    ToolButton(Icons.Default.Crop, "Crop", tool == Tool.CROP) { switchTool(Tool.CROP) }
                 }
             }
         },
@@ -340,13 +383,18 @@ fun EditorScreen(
                     .fillMaxSize()
                     .onSizeChanged { viewSize = it }
                     .pointerInput(tool, state.bitmap) {
-                        if (tool == Tool.TEXT) {
-                            detectTapGestures { pos ->
+                        when (tool) {
+                            Tool.TEXT -> detectTapGestures { pos ->
                                 textInput = ""
                                 pendingTextAt = toImage(pos)
                             }
-                        } else {
-                            detectDragGestures(
+                            Tool.SELECT -> detectTapGestures { pos ->
+                                val p = toImage(pos)
+                                val slop = 24f / fit().scale
+                                val idx = state.anns.indexOfLast { it.hit(p.x, p.y, slop) }
+                                selected = if (idx >= 0) idx else null
+                            }
+                            else -> detectDragGestures(
                                 onDragStart = { pos ->
                                     val p = toImage(pos)
                                     dragStart = p; dragEnd = p
@@ -364,13 +412,40 @@ fun EditorScreen(
                                 },
                             )
                         }
+                    }
+                    .pointerInput(tool, state.bitmap) {
+                        if (tool == Tool.SELECT) {
+                            var pushed = false
+                            detectDragGestures(
+                                onDragStart = { pos ->
+                                    val p = toImage(pos)
+                                    val slop = 24f / fit().scale
+                                    val idx = state.anns.indexOfLast { it.hit(p.x, p.y, slop) }
+                                    selected = if (idx >= 0) idx else null
+                                    pushed = false
+                                },
+                                onDrag = { change, amount ->
+                                    val i = selected ?: return@detectDragGestures
+                                    if (i >= state.anns.size) return@detectDragGestures
+                                    if (!pushed) {
+                                        state.push(); pushed = true
+                                    }
+                                    change.consume()
+                                    val s = fit().scale
+                                    state.anns = state.anns.toMutableList().also { list ->
+                                        list[i] = list[i].translated(amount.x / s, amount.y / s)
+                                    }
+                                },
+                            )
+                        }
                     },
             ) {
                 drawIntoCanvas { canvas ->
+                    val f = fit()
                     val c = canvas.nativeCanvas
                     c.save()
-                    c.translate(dx, dy)
-                    c.scale(scale, scale)
+                    c.translate(f.dx, f.dy)
+                    c.scale(f.scale, f.scale)
                     c.drawBitmap(state.bitmap, null,
                         RectF(0f, 0f, state.bitmap.width.toFloat(), state.bitmap.height.toFloat()),
                         null)
@@ -380,28 +455,42 @@ fun EditorScreen(
                     val e = dragEnd
                     when (tool) {
                         Tool.PEN -> if (penPoints.size > 1)
-                            c.drawAnn(Ann.Pen(penPoints, color, strokeWidth))
+                            c.drawAnn(Ann.Pen(penPoints, color, strokeWidthNow()))
                         Tool.ARROW -> if (s != null && e != null)
-                            c.drawAnn(Ann.Arrow(s.x, s.y, e.x, e.y, color, strokeWidth))
+                            c.drawAnn(Ann.Arrow(s.x, s.y, e.x, e.y, color, strokeWidthNow()))
                         Tool.BOX -> if (s != null && e != null)
-                            c.drawAnn(Ann.Box(s.x, s.y, e.x, e.y, color, strokeWidth))
+                            c.drawAnn(Ann.Box(s.x, s.y, e.x, e.y, color, strokeWidthNow()))
                         else -> {}
+                    }
+                    // selection outline
+                    val sel = selected
+                    if (tool == Tool.SELECT && sel != null && sel < state.anns.size) {
+                        val b = state.anns[sel].bounds()
+                        b.inset(-8f / f.scale, -8f / f.scale)
+                        val paint = android.graphics.Paint().apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            this.strokeWidth = 3f / f.scale
+                            this.color = 0xFF7163EE.toInt()
+                            pathEffect = android.graphics.DashPathEffect(
+                                floatArrayOf(14f / f.scale, 9f / f.scale), 0f)
+                        }
+                        c.drawRoundRect(b, 8f / f.scale, 8f / f.scale, paint)
+                    }
+                    if (tool == Tool.BLUR && s != null && e != null) {
+                        val paint = android.graphics.Paint().apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            this.strokeWidth = 3f / f.scale
+                            this.color = android.graphics.Color.WHITE
+                            pathEffect = android.graphics.DashPathEffect(
+                                floatArrayOf(12f / f.scale, 8f / f.scale), 0f)
+                        }
+                        c.drawRect(min(s.x, e.x), min(s.y, e.y), max(s.x, e.x), max(s.y, e.y), paint)
                     }
                     // crop overlay: darken everything outside the chosen rect
                     val cr: Rect? = cropRect ?: if (tool == Tool.CROP && s != null && e != null) Rect(
                         min(s.x, e.x).toInt(), min(s.y, e.y).toInt(),
                         max(s.x, e.x).toInt(), max(s.y, e.y).toInt(),
                     ) else null
-                    if (tool == Tool.BLUR && s != null && e != null) {
-                        val paint = android.graphics.Paint().apply {
-                            style = android.graphics.Paint.Style.STROKE
-                            this.strokeWidth = 3f / scale
-                            this.color = android.graphics.Color.WHITE
-                            pathEffect = android.graphics.DashPathEffect(
-                                floatArrayOf(12f / scale, 8f / scale), 0f)
-                        }
-                        c.drawRect(min(s.x, e.x), min(s.y, e.y), max(s.x, e.x), max(s.y, e.y), paint)
-                    }
                     if (cr != null) {
                         val dim = android.graphics.Paint().apply { this.color = 0x99000000.toInt() }
                         val w = state.bitmap.width.toFloat()
@@ -412,7 +501,7 @@ fun EditorScreen(
                         c.drawRect(cr.right.toFloat(), cr.top.toFloat(), w, cr.bottom.toFloat(), dim)
                         val border = android.graphics.Paint().apply {
                             style = android.graphics.Paint.Style.STROKE
-                            this.strokeWidth = 3f / scale
+                            this.strokeWidth = 3f / f.scale
                             this.color = android.graphics.Color.WHITE
                         }
                         c.drawRect(cr, border)
@@ -439,8 +528,9 @@ fun EditorScreen(
                 TextButton(onClick = {
                     if (textInput.isNotBlank()) {
                         state.push()
+                        val ts = textSizeNow()
                         state.anns = state.anns + Ann.Note(
-                            textAt.x, textAt.y + textSize, textInput.trim(), color, textSize,
+                            textAt.x, textAt.y + ts, textInput.trim(), color, ts,
                         )
                     }
                     pendingTextAt = null
