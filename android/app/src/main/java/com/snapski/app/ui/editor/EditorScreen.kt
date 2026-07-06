@@ -142,6 +142,7 @@ fun EditorScreen(
     var dragEnd by remember { mutableStateOf<Offset?>(null) }
     var cropRect by remember { mutableStateOf<Rect?>(null) }
     var pendingTextAt by remember { mutableStateOf<Offset?>(null) }
+    var editingNote by remember { mutableStateOf<Int?>(null) }
     var textInput by remember { mutableStateOf("") }
 
     val context = LocalContext.current
@@ -171,14 +172,29 @@ fun EditorScreen(
         )
     }
 
-    fun strokeWidthNow(): Float {
+    fun strokeWidthFor(level: Int): Float {
         val maxDim = max(state.bitmap.width, state.bitmap.height).toFloat()
-        return maxDim / 300f * listOf(1f, 2f, 3.5f)[widthLevel]
+        return maxDim / 300f * listOf(1f, 2f, 3.5f)[level]
     }
 
-    fun textSizeNow(): Float {
+    fun textSizeFor(level: Int): Float {
         val maxDim = max(state.bitmap.width, state.bitmap.height).toFloat()
-        return maxDim / 36f * listOf(0.75f, 1f, 1.5f)[widthLevel]
+        return maxDim / 36f * listOf(0.75f, 1f, 1.5f)[level]
+    }
+
+    fun strokeWidthNow() = strokeWidthFor(widthLevel)
+    fun textSizeNow() = textSizeFor(widthLevel)
+
+    /** Closest S/M/L level for an existing annotation, for highlighting in the size row. */
+    fun levelOf(ann: Ann): Int? {
+        val candidates = when (ann) {
+            is Ann.Note -> (0..2).map { textSizeFor(it) to ann.size }
+            is Ann.Blur -> return null
+            is Ann.Pen -> (0..2).map { strokeWidthFor(it) to ann.width }
+            is Ann.Arrow -> (0..2).map { strokeWidthFor(it) to ann.width }
+            is Ann.Box -> (0..2).map { strokeWidthFor(it) to ann.width }
+        }
+        return candidates.withIndex().minByOrNull { (_, p) -> abs(p.first - p.second) }?.index
     }
 
     fun dragRect(): Rect? {
@@ -241,6 +257,12 @@ fun EditorScreen(
                 },
                 actions = {
                     val sel = selected
+                    if (sel != null && state.anns.getOrNull(sel) is Ann.Note) {
+                        IconButton(onClick = {
+                            textInput = (state.anns[sel] as Ann.Note).text
+                            editingNote = sel
+                        }) { Icon(Icons.Default.Edit, contentDescription = "Edit text") }
+                    }
                     if (sel != null && sel < state.anns.size) {
                         IconButton(onClick = {
                             state.push()
@@ -316,7 +338,12 @@ fun EditorScreen(
                         }) { Text("Apply crop") }
                     }
                 }
-                if (tool != Tool.CROP && tool != Tool.SELECT) {
+                // Style row: picks the style for new marks, or restyles the selection in Move mode.
+                val selAnn = selected?.let { state.anns.getOrNull(it) }
+                val editingSelection = tool == Tool.SELECT && selAnn != null && selAnn !is Ann.Blur
+                if (tool != Tool.CROP && (tool != Tool.SELECT || editingSelection)) {
+                    val shownColor = if (editingSelection) selAnn?.annColor else color
+                    val shownLevel = if (editingSelection) selAnn?.let { levelOf(it) } else widthLevel
                     Row(
                         Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -326,16 +353,25 @@ fun EditorScreen(
                             Box(
                                 Modifier
                                     .padding(horizontal = 6.dp)
-                                    .size(if (c == color) 30.dp else 24.dp)
+                                    .size(if (c == shownColor) 30.dp else 24.dp)
                                     .clip(CircleShape)
                                     .background(Color(c))
                                     .border(
-                                        if (c == color) 2.dp else 1.dp,
-                                        if (c == color) MaterialTheme.colorScheme.primary
+                                        if (c == shownColor) 2.dp else 1.dp,
+                                        if (c == shownColor) MaterialTheme.colorScheme.primary
                                         else Color.White.copy(alpha = 0.4f),
                                         CircleShape,
                                     )
-                                    .clickable { color = c },
+                                    .clickable {
+                                        color = c
+                                        val i = selected
+                                        if (editingSelection && i != null) {
+                                            state.push()
+                                            state.anns = state.anns.toMutableList().also { l ->
+                                                l[i] = l[i].recolored(c)
+                                            }
+                                        }
+                                    },
                             )
                         }
                         listOf("S", "M", "L").forEachIndexed { i, label ->
@@ -345,10 +381,21 @@ fun EditorScreen(
                                     .size(30.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(
-                                        if (widthLevel == i) MaterialTheme.colorScheme.primary
+                                        if (shownLevel == i) MaterialTheme.colorScheme.primary
                                         else MaterialTheme.colorScheme.background
                                     )
-                                    .clickable { widthLevel = i },
+                                    .clickable {
+                                        widthLevel = i
+                                        val idx = selected
+                                        if (editingSelection && idx != null) {
+                                            state.push()
+                                            state.anns = state.anns.toMutableList().also { l ->
+                                                l[idx] = l[idx].resized(
+                                                    strokeWidthFor(i), textSizeFor(i),
+                                                )
+                                            }
+                                        }
+                                    },
                                 contentAlignment = Alignment.Center,
                             ) { Text(label, style = MaterialTheme.typography.labelMedium) }
                         }
@@ -385,8 +432,18 @@ fun EditorScreen(
                     .pointerInput(tool, state.bitmap) {
                         when (tool) {
                             Tool.TEXT -> detectTapGestures { pos ->
-                                textInput = ""
-                                pendingTextAt = toImage(pos)
+                                val p = toImage(pos)
+                                val slop = 24f / fit().scale
+                                val noteIdx = state.anns.indexOfLast {
+                                    it is Ann.Note && it.hit(p.x, p.y, slop)
+                                }
+                                if (noteIdx >= 0) {
+                                    textInput = (state.anns[noteIdx] as Ann.Note).text
+                                    editingNote = noteIdx
+                                } else {
+                                    textInput = ""
+                                    pendingTextAt = p
+                                }
                             }
                             Tool.SELECT -> detectTapGestures { pos ->
                                 val p = toImage(pos)
@@ -414,7 +471,19 @@ fun EditorScreen(
                         }
                     }
                     .pointerInput(tool, state.bitmap) {
-                        if (tool == Tool.SELECT) {
+                        if (tool != Tool.SELECT && tool != Tool.TEXT) {
+                            // A plain tap with any drawing tool grabs an existing mark
+                            // and jumps straight into Move mode.
+                            detectTapGestures { pos ->
+                                val p = toImage(pos)
+                                val slop = 24f / fit().scale
+                                val idx = state.anns.indexOfLast { it.hit(p.x, p.y, slop) }
+                                if (idx >= 0) {
+                                    selected = idx
+                                    tool = Tool.SELECT
+                                }
+                            }
+                        } else if (tool == Tool.SELECT) {
                             var pushed = false
                             detectDragGestures(
                                 onDragStart = { pos ->
@@ -513,10 +582,12 @@ fun EditorScreen(
     }
 
     val textAt = pendingTextAt
-    if (textAt != null) {
+    val noteIdx = editingNote
+    if (textAt != null || noteIdx != null) {
+        val dismiss = { pendingTextAt = null; editingNote = null }
         AlertDialog(
-            onDismissRequest = { pendingTextAt = null },
-            title = { Text("Add text") },
+            onDismissRequest = dismiss,
+            title = { Text(if (noteIdx != null) "Edit text" else "Add text") },
             text = {
                 OutlinedTextField(
                     value = textInput,
@@ -527,17 +598,27 @@ fun EditorScreen(
             confirmButton = {
                 TextButton(onClick = {
                     if (textInput.isNotBlank()) {
-                        state.push()
-                        val ts = textSizeNow()
-                        state.anns = state.anns + Ann.Note(
-                            textAt.x, textAt.y + ts, textInput.trim(), color, ts,
-                        )
+                        if (noteIdx != null && noteIdx < state.anns.size) {
+                            val old = state.anns[noteIdx]
+                            if (old is Ann.Note) {
+                                state.push()
+                                state.anns = state.anns.toMutableList().also { l ->
+                                    l[noteIdx] = old.copy(text = textInput.trim())
+                                }
+                            }
+                        } else if (textAt != null) {
+                            state.push()
+                            val ts = textSizeNow()
+                            state.anns = state.anns + Ann.Note(
+                                textAt.x, textAt.y + ts, textInput.trim(), color, ts,
+                            )
+                        }
                     }
-                    pendingTextAt = null
-                }) { Text("Add") }
+                    dismiss()
+                }) { Text(if (noteIdx != null) "Save" else "Add") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingTextAt = null }) { Text("Cancel") }
+                TextButton(onClick = dismiss) { Text("Cancel") }
             },
         )
     }

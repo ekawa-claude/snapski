@@ -39,6 +39,33 @@ fun Ann.translated(dx: Float, dy: Float): Ann = when (this) {
     is Ann.Blur -> copy(rect = Rect(rect).apply { offset(dx.toInt(), dy.toInt()) })
 }
 
+/** The annotation's tint, or null for kinds that have no color (blur). */
+val Ann.annColor: Int?
+    get() = when (this) {
+        is Ann.Pen -> color
+        is Ann.Arrow -> color
+        is Ann.Box -> color
+        is Ann.Note -> color
+        is Ann.Blur -> null
+    }
+
+fun Ann.recolored(c: Int): Ann = when (this) {
+    is Ann.Pen -> copy(color = c)
+    is Ann.Arrow -> copy(color = c)
+    is Ann.Box -> copy(color = c)
+    is Ann.Note -> copy(color = c)
+    is Ann.Blur -> this
+}
+
+/** Stroke-based kinds take [strokeW]; text takes [textSize]. Blur is not resizable. */
+fun Ann.resized(strokeW: Float, textSize: Float): Ann = when (this) {
+    is Ann.Pen -> copy(width = strokeW)
+    is Ann.Arrow -> copy(width = strokeW)
+    is Ann.Box -> copy(width = strokeW)
+    is Ann.Note -> copy(size = textSize)
+    is Ann.Blur -> this
+}
+
 /** Image-space bounding box, used for hit-testing and the selection outline. */
 fun Ann.bounds(): RectF = when (this) {
     is Ann.Pen -> {
