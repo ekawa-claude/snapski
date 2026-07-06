@@ -1,0 +1,15 @@
+[Unit]
+Description=SnapSki sync hub (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/snapski-hub
+Environment=SNAPSKI_HUB_DATA=/home/ubuntu/snapski-hub/data
+ExecStart=/home/ubuntu/snapski-hub/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8790
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,8 @@
+# Add inside the existing chat.wishly.wtf site block in the Caddyfile.
+# handle_path strips the /snapski-hub prefix, so the app sees /register, /shots, etc.
+# Scoped matcher only — do NOT widen to /snapski* (remember the /admin* gotcha where a
+# broad matcher swallowed unrelated routes).
+
+handle_path /snapski-hub/* {
+    reverse_proxy 127.0.0.1:8790
+}
