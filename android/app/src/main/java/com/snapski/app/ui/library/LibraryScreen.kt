@@ -22,9 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -55,6 +59,7 @@ import coil.compose.AsyncImage
 import com.snapski.app.capture.CaptureActivity
 import com.snapski.app.data.LibraryRepository
 import com.snapski.app.data.Shot
+import com.snapski.app.data.sync.SyncScheduler
 import com.snapski.app.util.Exporter
 import kotlinx.coroutines.launch
 
@@ -63,6 +68,7 @@ import kotlinx.coroutines.launch
 fun LibraryScreen(
     library: LibraryRepository,
     onOpen: (Shot) -> Unit,
+    onSettings: () -> Unit,
 ) {
     val shots by library.shots.collectAsState()
     val sorted = remember(shots) { shots.sortedByDescending { it.createdAt } }
@@ -94,6 +100,11 @@ fun LibraryScreen(
                 actions = {
                     if (selecting) {
                         IconButton(onClick = {
+                            library.requestSync(selection)
+                            SyncScheduler.syncNow(context)
+                            selection = emptySet()
+                        }) { Icon(Icons.Default.CloudUpload, contentDescription = "Sync") }
+                        IconButton(onClick = {
                             val files = shots.filter { it.id in selection }.map { library.file(it) }
                             Exporter.share(context, files)
                         }) { Icon(Icons.Default.Share, contentDescription = "Share") }
@@ -114,6 +125,9 @@ fun LibraryScreen(
                                 else MaterialTheme.colorScheme.onSurface,
                                 contentDescription = "Favorites",
                             )
+                        }
+                        IconButton(onClick = onSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
                     }
                 },
@@ -193,6 +207,22 @@ fun LibraryScreen(
                                 .align(Alignment.TopEnd)
                                 .padding(4.dp)
                                 .size(18.dp),
+                        )
+                        val syncIcon = when {
+                            shot.uploadedSeq != null -> Icons.Filled.CloudDone
+                            shot.wantSync -> Icons.Filled.CloudQueue
+                            else -> null
+                        }
+                        if (syncIcon != null) Icon(
+                            syncIcon,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(4.dp)
+                                .size(18.dp)
+                                .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                                .padding(2.dp),
                         )
                         if (selected) Icon(
                             Icons.Filled.CheckCircle,

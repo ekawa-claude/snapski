@@ -13,8 +13,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.snapski.app.capture.CaptureService
+import com.snapski.app.data.sync.SyncScheduler
 import com.snapski.app.ui.editor.EditorScreen
 import com.snapski.app.ui.library.LibraryScreen
+import com.snapski.app.ui.settings.SettingsScreen
 import com.snapski.app.ui.theme.SnapSkiTheme
 import com.snapski.app.ui.viewer.ViewerScreen
 
@@ -55,6 +57,15 @@ class MainActivity : ComponentActivity() {
                         LibraryScreen(
                             library = library,
                             onOpen = { nav.navigate("viewer/${it.id}") },
+                            onSettings = { nav.navigate("settings") },
+                        )
+                    }
+                    composable("settings") {
+                        val app = application as SnapSkiApp
+                        SettingsScreen(
+                            prefs = app.syncPrefs,
+                            engine = app.syncEngine,
+                            onBack = { nav.popBackStack() },
                         )
                     }
                     composable("viewer/{id}") { entry ->
@@ -81,6 +92,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Foreground pull: pick up anything from other devices.
+        SyncScheduler.syncNow(this)
     }
 
     override fun onNewIntent(intent: Intent) {

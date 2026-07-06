@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import com.snapski.app.data.LibraryRepository
 import com.snapski.app.data.Shot
+import com.snapski.app.data.sync.SyncScheduler
 import com.snapski.app.util.Exporter
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,7 +76,10 @@ fun ViewerScreen(
                 },
                 actions = {
                     val accent = MaterialTheme.colorScheme.primary
-                    IconButton(onClick = { library.toggleFavorite(current.id) }) {
+                    IconButton(onClick = {
+                        library.toggleFavorite(current.id)
+                        SyncScheduler.syncNow(context)
+                    }) {
                         Icon(
                             if (current.favorite) Icons.Filled.Star else Icons.Outlined.Star,
                             tint = if (current.favorite) Color(0xFFFFC93C) else accent,

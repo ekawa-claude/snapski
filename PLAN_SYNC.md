@@ -45,18 +45,41 @@ Caddy: route `chat.wishly.wtf/snapski-hub/*` → localhost:8790
 
 ## 3b. Android-клиент
 
-- `SyncEngine` (в `data/sync/`): очередь аплоада (все локальные шоты без
-  флага uploaded) + pull `/changes` → применить к библиотеке (докачать PNG,
-  favorite/delete LWW; локальные правки шлём как ops).
-- Индекс: в `Shot` добавить `uploadedSeq: Long?`/`pendingOps`; курсор в
-  SharedPreferences.
-- **WorkManager**: expedited OneTime на каждое сохранение (capture/edit/import)
-  + Periodic 30 мин; плюс pull при выходе приложения на foreground.
+**Синк — OPT-IN (решено 2026-07-06).** Скриншоты шумные: пушить всё подряд =
+гонять мусор. Юзер сам выбирает, что уходит в облако. Два пути попадания в синк:
+1. **Явно**: мультивыбор → кнопка **Sync** (ставит `wantSync=true` на выбранных).
+2. **Неявно**: добавление в **избранное** авто-ставит `wantSync=true`
+   (раз в избранном — человек хочет к этому вернуться).
+
+Это **чисто клиентская политика — hub НЕ меняется** (он и так принимает только
+пушнутое). Дефолт нового шота: `wantSync=false`, лежит только локально.
+
+Модель данных в `Shot` — развести намерение и факт:
+- `wantSync: Boolean` — намерение (Sync-кнопка / favorite).
+- `uploadedSeq: Long?` — факт заливки (ставит SyncEngine после POST /shots).
+- Очередь аплоада = `shots.filter { wantSync && uploadedSeq == null }`.
+
+Правила:
+- **Favorite → sync**: при включении избранного enqueue **шот, ПОТОМ** favorite-op
+  (иначе `/ops` сошлётся на `shot_id`, которого на сервере ещё нет — порядок важен).
+- **Снятие избранного НЕ отзывает синк** (sticky one-way, решено): favorite-op
+  `value=false` уходит (звёздочка пропадёт везде), но файл в облаке остаётся.
+  Явный «убрать из облака» (= delete-op) — отдельная кнопка позже (3d).
+
+Компоненты:
+- `SyncEngine` (в `data/sync/`): очередь аплоада (см. выше) + локальные
+  favorite/delete → POST `/ops` + pull `/changes` → применить к библиотеке
+  (докачать PNG, favorite/delete LWW). Курсор `seq` в SharedPreferences.
+- **WorkManager**: expedited OneTime **когда появился шот с `wantSync=true`**
+  (favorite / Sync-кнопка) — НЕ на каждое сохранение; + Periodic 30 мин;
+  + pull при выходе приложения на foreground.
 - **Пейринг**: экран Settings → «Подключить синк» → сканер QR
   (zxing-android-embedded, лёгкая либа) + поле «вставить код вручную»
   (fallback). Хранение token'а — EncryptedSharedPreferences.
 - **Тумблер «Синк»** в Settings: off = очередь стоит, ничего не уходит;
-  on = досылает накопленное. (Открытый вопрос на потом: per-shot «не синкать».)
+  on = досылает накопленное `wantSync`-шоты.
+- UI: кнопка **Sync** в тулбаре мультивыбора + бейдж на карточке
+  («в облаке» / «ждёт заливки»).
 - Статус в Settings: последний синк, штук в очереди, занято на сервере.
 
 ## 3c. Desktop-клиент (Electron)
