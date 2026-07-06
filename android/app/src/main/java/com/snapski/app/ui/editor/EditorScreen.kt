@@ -4,6 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.graphics.RectF
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -315,7 +320,11 @@ fun EditorScreen(
         },
         bottomBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.surface)) {
-                if (cropRect != null) {
+                AnimatedVisibility(
+                    visible = cropRect != null,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.End,
@@ -341,7 +350,11 @@ fun EditorScreen(
                 // Style row: picks the style for new marks, or restyles the selection in Move mode.
                 val selAnn = selected?.let { state.anns.getOrNull(it) }
                 val editingSelection = tool == Tool.SELECT && selAnn != null && selAnn !is Ann.Blur
-                if (tool != Tool.CROP && (tool != Tool.SELECT || editingSelection)) {
+                AnimatedVisibility(
+                    visible = tool != Tool.CROP && (tool != Tool.SELECT || editingSelection),
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
                     val shownColor = if (editingSelection) selAnn?.annColor else color
                     val shownLevel = if (editingSelection) selAnn?.let { levelOf(it) } else widthLevel
                     Row(

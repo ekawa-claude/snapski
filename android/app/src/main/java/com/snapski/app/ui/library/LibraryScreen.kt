@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -51,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.snapski.app.capture.CaptureActivity
 import com.snapski.app.data.LibraryRepository
 import com.snapski.app.data.Shot
 import com.snapski.app.util.Exporter
@@ -100,6 +102,11 @@ fun LibraryScreen(
                             selection = emptySet()
                         }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
                     } else {
+                        IconButton(onClick = {
+                            context.startActivity(
+                                android.content.Intent(context, CaptureActivity::class.java),
+                            )
+                        }) { Icon(Icons.Default.PhotoCamera, contentDescription = "Capture screen") }
                         IconButton(onClick = { favoritesOnly = !favoritesOnly }) {
                             Icon(
                                 if (favoritesOnly) Icons.Filled.Star else Icons.Outlined.Star,

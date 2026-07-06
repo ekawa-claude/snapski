@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.snapski.app.capture.CaptureService
 import com.snapski.app.ui.editor.EditorScreen
 import com.snapski.app.ui.library.LibraryScreen
 import com.snapski.app.ui.theme.SnapSkiTheme
@@ -20,6 +21,7 @@ import com.snapski.app.ui.viewer.ViewerScreen
 class MainActivity : ComponentActivity() {
 
     private var pendingShare by mutableStateOf<List<Uri>?>(null)
+    private var pendingOpenShot by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,6 +31,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             SnapSkiTheme {
                 val nav = rememberNavController()
+
+                LaunchedEffect(pendingOpenShot) {
+                    val id = pendingOpenShot ?: return@LaunchedEffect
+                    pendingOpenShot = null
+                    if (library.byId(id) != null) nav.navigate("editor/$id")
+                }
 
                 LaunchedEffect(pendingShare) {
                     val uris = pendingShare ?: return@LaunchedEffect
@@ -82,6 +90,11 @@ class MainActivity : ComponentActivity() {
 
     private fun extractShared(intent: Intent?) {
         intent ?: return
+        intent.getStringExtra(CaptureService.EXTRA_OPEN_SHOT)?.let {
+            pendingOpenShot = it
+            intent.removeExtra(CaptureService.EXTRA_OPEN_SHOT)
+            return
+        }
         @Suppress("DEPRECATION")
         val uris: List<Uri> = when (intent.action) {
             Intent.ACTION_SEND ->

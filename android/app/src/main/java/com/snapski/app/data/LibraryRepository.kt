@@ -58,13 +58,22 @@ class LibraryRepository(private val context: Context) {
             imported
         }
 
-    suspend fun saveEdited(bitmap: Bitmap, from: Shot?): Shot = withContext(Dispatchers.IO) {
+    suspend fun saveEdited(bitmap: Bitmap, from: Shot?): Shot =
+        saveBitmap(bitmap, source = "edit", editedFrom = from?.id)
+
+    suspend fun saveCapture(bitmap: Bitmap): Shot = saveBitmap(bitmap, source = "capture")
+
+    private suspend fun saveBitmap(
+        bitmap: Bitmap,
+        source: String,
+        editedFrom: String? = null,
+    ): Shot = withContext(Dispatchers.IO) {
         val id = UUID.randomUUID().toString().take(8)
         val name = "$id.png"
         File(dir, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         val shot = Shot(
             id = id, fileName = name, createdAt = System.currentTimeMillis(),
-            source = "edit", editedFrom = from?.id,
+            source = source, editedFrom = editedFrom,
         )
         mutate { it + shot }
         shot
