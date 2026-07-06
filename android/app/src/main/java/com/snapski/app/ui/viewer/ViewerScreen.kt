@@ -74,19 +74,19 @@ fun ViewerScreen(
                     }
                 },
                 actions = {
+                    val accent = MaterialTheme.colorScheme.primary
                     IconButton(onClick = { library.toggleFavorite(current.id) }) {
                         Icon(
                             if (current.favorite) Icons.Filled.Star else Icons.Outlined.Star,
-                            tint = if (current.favorite) Color(0xFFFFC93C)
-                            else MaterialTheme.colorScheme.onSurface,
+                            tint = if (current.favorite) Color(0xFFFFC93C) else accent,
                             contentDescription = "Favorite",
                         )
                     }
                     IconButton(onClick = { onEdit(current) }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                        Icon(Icons.Default.Edit, tint = accent, contentDescription = "Edit")
                     }
                     IconButton(onClick = { Exporter.share(context, listOf(library.file(current))) }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share")
+                        Icon(Icons.Default.Share, tint = accent, contentDescription = "Share")
                     }
                     IconButton(onClick = {
                         val ok = Exporter.saveToGallery(context, current, library.file(current))
@@ -95,11 +95,19 @@ fun ViewerScreen(
                             if (ok) "Saved to Pictures/SnapSki" else "Save failed",
                             Toast.LENGTH_SHORT,
                         ).show()
-                    }) { Icon(Icons.Default.SaveAlt, contentDescription = "Save to gallery") }
+                    }) {
+                        Icon(Icons.Default.SaveAlt, tint = accent, contentDescription = "Save to gallery")
+                    }
                     IconButton(onClick = {
                         library.delete(setOf(current.id))
                         if (sorted.size <= 1) onBack()
-                    }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
+                    }) {
+                        Icon(
+                            Icons.Default.Delete,
+                            tint = MaterialTheme.colorScheme.error,
+                            contentDescription = "Delete",
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Black.copy(alpha = 0.4f),

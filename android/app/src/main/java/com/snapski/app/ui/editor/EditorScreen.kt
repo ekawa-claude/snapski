@@ -297,7 +297,13 @@ fun EditorScreen(
                             f.outputStream().use { out.compress(Bitmap.CompressFormat.PNG, 100, it) }
                             withContext(Dispatchers.Main) { Exporter.share(context, listOf(f)) }
                         }
-                    }) { Icon(Icons.Default.Share, contentDescription = "Share") }
+                    }) {
+                        Icon(
+                            Icons.Default.Share,
+                            tint = MaterialTheme.colorScheme.primary,
+                            contentDescription = "Share",
+                        )
+                    }
                     IconButton(onClick = {
                         scope.launch {
                             val out = withContext(Dispatchers.Default) {
