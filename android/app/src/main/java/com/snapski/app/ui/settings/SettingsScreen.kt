@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.snapski.app.data.ScreenshotImporter
 import com.snapski.app.data.sync.Pairing
 import com.snapski.app.data.sync.SyncEngine
 import com.snapski.app.data.sync.SyncPrefs
@@ -50,6 +51,7 @@ import java.util.Date
 fun SettingsScreen(
     prefs: SyncPrefs,
     engine: SyncEngine,
+    importer: ScreenshotImporter,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -80,7 +82,7 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Синхронизация") },
+                title = { Text("Настройки") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
@@ -97,6 +99,10 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Spacer(Modifier.height(4.dp))
+
+            ScreenshotSection(importer)
+
+            HorizontalDivider()
 
             if (!paired) {
                 Text(

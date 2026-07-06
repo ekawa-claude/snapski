@@ -14,6 +14,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.snapski.app.capture.CaptureService
 import com.snapski.app.data.sync.SyncScheduler
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.snapski.app.ui.editor.EditorScreen
 import com.snapski.app.ui.library.LibraryScreen
 import com.snapski.app.ui.settings.SettingsScreen
@@ -65,6 +67,7 @@ class MainActivity : ComponentActivity() {
                         SettingsScreen(
                             prefs = app.syncPrefs,
                             engine = app.syncEngine,
+                            importer = app.screenshots,
                             onBack = { nav.popBackStack() },
                         )
                     }
@@ -110,6 +113,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Foreground pull: pick up anything from other devices.
         SyncScheduler.syncNow(this)
+        // Opt-in: pull fresh system screenshots into the library.
+        val app = application as SnapSkiApp
+        if (app.screenshots.enabled) lifecycleScope.launch { app.screenshots.importNew() }
     }
 
     override fun onNewIntent(intent: Intent) {

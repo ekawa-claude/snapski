@@ -2,6 +2,7 @@ package com.snapski.app
 
 import android.app.Application
 import com.snapski.app.data.LibraryRepository
+import com.snapski.app.data.ScreenshotImporter
 import com.snapski.app.data.sync.SyncEngine
 import com.snapski.app.data.sync.SyncPrefs
 import com.snapski.app.data.sync.SyncScheduler
@@ -20,12 +21,15 @@ class SnapSkiApp : Application() {
         private set
     lateinit var syncSse: SyncSse
         private set
+    lateinit var screenshots: ScreenshotImporter
+        private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
         library = LibraryRepository(this)
+        screenshots = ScreenshotImporter(this, library)
         syncPrefs = SyncPrefs(this)
         syncEngine = SyncEngine(library, syncPrefs)
         // Live push: an SSE ping just runs the normal sync cycle.
