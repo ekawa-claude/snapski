@@ -69,6 +69,21 @@ export interface HistoryItem {
   thumb: string | null
   /** Starred in the gallery. */
   favorite: boolean
+  /** Sync state for this file, or null if it's not tracked by sync. */
+  sync?: { wantSync: boolean; uploaded: boolean } | null
+}
+
+export interface SyncStatus {
+  paired: boolean
+  enabled: boolean
+  running: boolean
+  lastSyncAt: number
+  queued: number
+  serverUsed: number
+  serverQuota: number
+  storageFull: boolean
+  lastError: string | null
+  hubUrl: string | null
 }
 
 export interface VideoExportOpts {

@@ -16,7 +16,9 @@ import {
   CircleDot,
   Play,
   Scissors,
-  RefreshCw
+  RefreshCw,
+  Cloud,
+  CloudUpload
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -418,6 +420,22 @@ function App(): JSX.Element {
                           <Play className="h-2.5 w-2.5 fill-current" /> Video
                         </span>
                       )}
+                      {item.sync &&
+                        (item.sync.uploaded ? (
+                          <span
+                            title="Synced to cloud"
+                            className="absolute left-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-lg bg-black/55 backdrop-blur"
+                          >
+                            <Cloud className="h-3.5 w-3.5 fill-white/80 text-white/90" />
+                          </span>
+                        ) : item.sync.wantSync ? (
+                          <span
+                            title="Waiting to upload"
+                            className="absolute left-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-lg bg-black/55 backdrop-blur"
+                          >
+                            <CloudUpload className="h-3.5 w-3.5 text-white/70" />
+                          </span>
+                        ) : null)}
                       {/* Star: always visible when favorited, appears on hover otherwise */}
                       <button
                         onClick={(e) => {
@@ -511,6 +529,20 @@ function App(): JSX.Element {
               setCtxMenu(null)
             }}
           />
+          {ctxMenu.item.type === 'image' && !ctxMenu.item.sync?.wantSync && (
+            <CtxItem
+              icon={<CloudUpload className="h-3.5 w-3.5" />}
+              label="Sync to cloud"
+              onClick={() => {
+                const it = ctxMenu.item
+                setCtxMenu(null)
+                void window.snap.syncRequest([it.name]).then(() => {
+                  showToast('Added to sync')
+                  void refreshHistory()
+                })
+              }}
+            />
+          )}
           <div className="my-1 h-px bg-border/60" />
           <CtxItem
             icon={<Copy className="h-3.5 w-3.5" />}

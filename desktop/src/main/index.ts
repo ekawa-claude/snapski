@@ -12,8 +12,10 @@ import {
   clipboard,
   protocol
 } from 'electron'
-import { join, resolve, sep } from 'path'
+import { join, resolve, sep, basename } from 'path'
 import { writeFile, readdir, stat, copyFile } from 'fs/promises'
+import QRCode from 'qrcode'
+import { SyncManager } from './sync'
 import { createReadStream, existsSync } from 'fs'
 import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -38,6 +40,10 @@ let mainWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let pendingWindowRect: Rect | null = null
+let syncMgr: SyncManager | null = null
+
+/** Default hub for a device that creates a new group. */
+const DEFAULT_HUB = 'https://chat.wishly.wtf/snapski-hub'
 
 /** True when launched by the OS auto-start entry — boot straight into the tray. */
 const startedHidden = process.argv.includes('--hidden')
@@ -579,6 +585,12 @@ function createTray(): void {
 
 // ---------- IPC ----------
 function registerIpc(): void {
+  syncMgr = new SyncManager(
+    () => loadSettings().outputFolder,
+    (s) => mainWindow?.webContents.send('sync:status', s),
+    () => mainWindow?.webContents.send('history:changed'),
+  )
+
   ipcMain.handle('settings:get', () => loadSettings())
   ipcMain.handle('settings:set', (_e, patch) => {
     const next = saveSettings(patch)
@@ -629,7 +641,7 @@ function registerIpc(): void {
           it.type === 'image'
             ? await imageThumbnail(it.path, it.mtime)
             : await videoThumbnail(it.path, it.mtime)
-        out.push({ ...it, thumb, favorite: isFavorite(it.name) })
+        out.push({ ...it, thumb, favorite: isFavorite(it.name), sync: syncMgr?.entryState(it.name) ?? null })
         await new Promise(setImmediate)
       }
       return out
@@ -641,10 +653,13 @@ function registerIpc(): void {
   // Gallery actions -----------------------------------------------------
   ipcMain.handle('history:favorite', (_e, name: string, fav: boolean) => {
     setFavorite(name, fav)
+    // Favoriting opts a shot into sync (and propagates the star to other devices).
+    if (/\.png$/i.test(name)) syncMgr?.onLocalFavorite(name, fav)
   })
   ipcMain.handle('history:delete', async (_e, p: string) => {
     try {
       await shell.trashItem(p)
+      syncMgr?.onLocalDelete(basename(p))
       return true
     } catch (err) {
       console.error('trash failed', err)
@@ -806,6 +821,24 @@ function registerIpc(): void {
 
   // Hotkeys that couldn't be registered (renderer polls once on load).
   ipcMain.handle('hotkeys:failures', () => hotkeyFailures)
+
+  // Sync (phase 3c) -----------------------------------------------------
+  ipcMain.handle('sync:status', () => syncMgr?.status() ?? null)
+  ipcMain.handle('sync:create', async () => {
+    await syncMgr?.createGroup(DEFAULT_HUB)
+    return syncMgr?.status() ?? null
+  })
+  ipcMain.handle('sync:join', (_e, code: string) => syncMgr?.joinByCode(code) ?? false)
+  ipcMain.handle('sync:unpair', () => syncMgr?.unpair())
+  ipcMain.handle('sync:setEnabled', (_e, on: boolean) => syncMgr?.setEnabled(on))
+  ipcMain.handle('sync:request', (_e, names: string[]) => syncMgr?.requestSync(names))
+  ipcMain.handle('sync:now', () => syncMgr?.sync())
+  ipcMain.handle('sync:pairPayload', async () => {
+    const code = syncMgr?.pairCode()
+    if (!code) return null
+    const qr = await QRCode.toDataURL(code, { margin: 1, width: 320 })
+    return { code, qr }
+  })
 }
 
 app.whenReady().then(() => {
@@ -822,6 +855,7 @@ app.whenReady().then(() => {
   createTray()
   registerHotkeys()
   initUpdater(() => mainWindow)
+  syncMgr?.start()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

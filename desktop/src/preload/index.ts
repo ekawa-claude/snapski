@@ -7,6 +7,7 @@ import type {
   RecordingResult,
   RecordingState,
   Rect,
+  SyncStatus,
   UpdateStatus,
   VideoExportOpts,
   VideoExportResult
@@ -107,6 +108,22 @@ const api = {
     const listener = (): void => cb()
     ipcRenderer.on('history:changed', listener)
     return () => ipcRenderer.removeListener('history:changed', listener)
+  },
+
+  // sync (phase 3c)
+  syncStatus: (): Promise<SyncStatus | null> => ipcRenderer.invoke('sync:status'),
+  syncCreate: (): Promise<SyncStatus | null> => ipcRenderer.invoke('sync:create'),
+  syncJoin: (code: string): Promise<boolean> => ipcRenderer.invoke('sync:join', code),
+  syncUnpair: (): Promise<void> => ipcRenderer.invoke('sync:unpair'),
+  syncSetEnabled: (on: boolean): Promise<void> => ipcRenderer.invoke('sync:setEnabled', on),
+  syncRequest: (names: string[]): Promise<void> => ipcRenderer.invoke('sync:request', names),
+  syncNow: (): Promise<void> => ipcRenderer.invoke('sync:now'),
+  syncPairPayload: (): Promise<{ code: string; qr: string } | null> =>
+    ipcRenderer.invoke('sync:pairPayload'),
+  onSyncStatus: (cb: (s: SyncStatus) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: SyncStatus): void => cb(s)
+    ipcRenderer.on('sync:status', listener)
+    return () => ipcRenderer.removeListener('sync:status', listener)
   }
 }
 

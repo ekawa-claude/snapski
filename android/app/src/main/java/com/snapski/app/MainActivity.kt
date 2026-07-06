@@ -94,6 +94,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Live sync while the app is in the foreground.
+        (application as SnapSkiApp).syncSse.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Drop the SSE stream when backgrounded; WorkManager covers the rest.
+        (application as SnapSkiApp).syncSse.stop()
+    }
+
     override fun onResume() {
         super.onResume()
         // Foreground pull: pick up anything from other devices.

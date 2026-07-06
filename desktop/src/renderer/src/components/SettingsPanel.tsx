@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react'
-import { X, FolderOpen } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { X, FolderOpen, Cloud, RefreshCw, Link2Off } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { AppSettings } from '@shared/types'
+import type { AppSettings, SyncStatus } from '@shared/types'
 
 interface Props {
   settings: AppSettings
@@ -151,12 +151,193 @@ export function SettingsPanel({ settings, onClose, onChange }: Props): JSX.Eleme
               onChange={(v) => patch({ autoLaunch: v })}
             />
           </div>
+
+          <div className="border-t border-border/60 pt-4">
+            <SyncSection />
+          </div>
         </div>
 
         <div className="flex justify-end border-t border-border/60 px-5 py-3.5">
           <Button onClick={onClose}>Done</Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function formatBytes(b: number): string {
+  if (b <= 0) return '0 MB'
+  if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function formatTime(ts: number): string {
+  return ts > 0 ? new Date(ts).toLocaleString() : '—'
+}
+
+function SyncSection(): JSX.Element {
+  const [status, setStatus] = useState<SyncStatus | null>(null)
+  const [pair, setPair] = useState<{ code: string; qr: string } | null>(null)
+  const [joinCode, setJoinCode] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void window.snap.syncStatus().then(setStatus)
+    return window.snap.onSyncStatus(setStatus)
+  }, [])
+
+  const refresh = async (): Promise<void> => setStatus(await window.snap.syncStatus())
+  const showQr = async (): Promise<void> => setPair(await window.snap.syncPairPayload())
+
+  const create = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      await window.snap.syncCreate()
+      await refresh()
+      await showQr()
+    } catch {
+      /* register failed — status shows nothing changed */
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const join = async (): Promise<void> => {
+    const code = joinCode.trim()
+    if (!code) return
+    if (await window.snap.syncJoin(code)) {
+      setJoinCode('')
+      await refresh()
+    }
+  }
+
+  const paired = status?.paired ?? false
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Cloud className="h-4 w-4 text-primary" />
+        <div>
+          <div className="text-xs font-semibold text-foreground">Sync</div>
+          <div className="text-[11px] text-muted-foreground">
+            Favorites &amp; selected shots follow you across devices.
+          </div>
+        </div>
+      </div>
+
+      {!paired ? (
+        <div className="space-y-2">
+          <Button className="w-full" disabled={busy} onClick={create}>
+            {busy ? 'Creating…' : 'Create a sync group'}
+          </Button>
+          <div className="text-center text-[11px] text-muted-foreground">or join an existing one</div>
+          <div className="flex gap-2">
+            <input
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
+              placeholder="Paste code (snapski://…)"
+              className="flex h-9 flex-1 rounded-lg border border-input bg-background px-3 text-xs"
+            />
+            <Button variant="secondary" disabled={!joinCode.trim()} onClick={join}>
+              Join
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <Toggle
+            label="Enable sync"
+            hint={status?.enabled ? undefined : 'Off — the queue is paused.'}
+            checked={status?.enabled ?? false}
+            onChange={async (v) => {
+              await window.snap.syncSetEnabled(v)
+              await refresh()
+            }}
+          />
+
+          <div className="rounded-lg border border-border/60 p-3 text-xs space-y-1.5">
+            <StatRow label="Last sync" value={formatTime(status?.lastSyncAt ?? 0)} />
+            <StatRow label="Queued" value={String(status?.queued ?? 0)} />
+            <StatRow
+              label="On server"
+              value={
+                status && status.serverQuota > 0
+                  ? `${formatBytes(status.serverUsed)} of ${formatBytes(status.serverQuota)}`
+                  : formatBytes(status?.serverUsed ?? 0)
+              }
+            />
+          </div>
+
+          {status?.storageFull && (
+            <p className="text-[11px] text-destructive">
+              Group storage is full — new shots won&apos;t upload.
+            </p>
+          )}
+          {status?.lastError && (
+            <p className="truncate text-[11px] text-destructive">Sync error: {status.lastError}</p>
+          )}
+
+          {!pair ? (
+            <Button variant="secondary" className="w-full" onClick={showQr}>
+              Show QR to pair a phone
+            </Button>
+          ) : (
+            <div className="space-y-2 rounded-lg border border-border/60 p-3">
+              <img
+                src={pair.qr}
+                alt="Pairing QR"
+                className="mx-auto h-40 w-40 rounded bg-white p-1"
+              />
+              <textarea
+                readOnly
+                value={pair.code}
+                onFocus={(e) => e.currentTarget.select()}
+                className="h-14 w-full resize-none rounded border border-input bg-background p-2 font-mono text-[10px]"
+              />
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  className="flex-1"
+                  onClick={() => navigator.clipboard.writeText(pair.code)}
+                >
+                  Copy code
+                </Button>
+                <Button variant="ghost" onClick={() => setPair(null)}>
+                  Hide
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => window.snap.syncNow()}>
+              <RefreshCw className={cn('mr-2 h-3.5 w-3.5', status?.running && 'animate-spin')} />
+              Sync now
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                await window.snap.syncUnpair()
+                setPair(null)
+                await refresh()
+              }}
+            >
+              <Link2Off className="mr-2 h-3.5 w-3.5" />
+              Unpair
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatRow({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div className="flex justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-foreground">{value}</span>
     </div>
   )
 }
