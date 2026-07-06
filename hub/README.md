@@ -57,7 +57,9 @@ curl -s "$BASE/changes?since=0" -H "$AUTH"
 
 ## Deploy on Oracle VM
 
-Repo is already the PRIVATE monorepo. On the VM:
+Runs from the monorepo checkout at `~/snapski` (cloned via the VM's GitHub SSH
+deploy key: `git clone git@github.com:ekawa-claude/snapski.git ~/snapski`).
+On the VM:
 
 ```bash
 cd ~/snapski && git pull --ff-only
