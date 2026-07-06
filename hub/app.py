@@ -36,7 +36,7 @@ GROUP_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
 CHANGES_LIMIT = 200
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024  # a single PNG shot; sanity ceiling
 
-app = FastAPI(title="SnapSki Hub", version="1.1")
+app = FastAPI(title="SnapSki Hub", version="1.2")
 
 # In-memory SSE fan-out: group_id -> set of per-connection asyncio queues.
 # Works because the hub runs a single uvicorn worker (see snapski-hub.service).
@@ -96,6 +96,15 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_events_group_seq ON events(group_id, seq);
             """
+        )
+        # Compact history: drop shot/favorite events superseded by a later
+        # delete of the same shot, so fresh devices never replay (and try to
+        # download) shots that no longer exist.
+        conn.execute(
+            "DELETE FROM events WHERE kind IN ('shot','favorite') AND EXISTS ("
+            "  SELECT 1 FROM events d WHERE d.group_id = events.group_id"
+            "  AND d.shot_id = events.shot_id AND d.kind = 'delete'"
+            "  AND d.seq > events.seq)"
         )
 
 
@@ -257,8 +266,9 @@ async def upload_shot(
 async def post_op(request: Request, group_id: str = Depends(require_group)):
     """Record a favorite/delete op. Body: {kind, shot_id, value?, ts}.
 
-    delete also removes the stored file (id/meta row stays absent; the event
-    persists so other devices learn about it). Returns {seq}.
+    delete also removes the stored file and compacts away the shot's earlier
+    shot/favorite events (the delete event itself persists so other devices
+    learn about it). Returns {seq}.
     """
     body = await request.json()
     kind = (body or {}).get("kind", "")
@@ -274,10 +284,12 @@ async def post_op(request: Request, group_id: str = Depends(require_group)):
     now = int(time.time())
     with db() as conn:
         if kind == "favorite":
+            # True LWW by client ts: ignore ops older than the last applied one.
             conn.execute(
-                "UPDATE shots SET meta = json_set(meta, '$.favorite', ?) "
-                "WHERE group_id = ? AND shot_id = ?",
-                (bool(value), group_id, shot_id),
+                "UPDATE shots SET meta = json_set(meta, '$.favorite', ?, '$.favoriteTs', ?) "
+                "WHERE group_id = ? AND shot_id = ? "
+                "AND COALESCE(json_extract(meta, '$.favoriteTs'), 0) <= ?",
+                (bool(value), ts, group_id, shot_id, ts),
             )
         elif kind == "delete":
             row = conn.execute(
@@ -293,6 +305,12 @@ async def post_op(request: Request, group_id: str = Depends(require_group)):
                 fp = FILES_DIR / group_id / f"{safe_id}.png"
                 if fp.exists():
                     fp.unlink()
+            # Compact: earlier shot/favorite events for this shot are moot now.
+            conn.execute(
+                "DELETE FROM events WHERE group_id = ? AND shot_id = ? "
+                "AND kind IN ('shot','favorite')",
+                (group_id, shot_id),
+            )
         cur = conn.execute(
             "INSERT INTO events(group_id, kind, shot_id, value, ts, meta, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
