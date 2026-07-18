@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SnapSki for Chrome",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Capture browser tabs (visible area or full page) and annotate them — arrows, boxes, blur, numbered steps, text, crop.",
   "permissions": ["activeTab", "scripting", "downloads", "storage", "unlimitedStorage", "contextMenus"],
   "host_permissions": ["<all_urls>"],
