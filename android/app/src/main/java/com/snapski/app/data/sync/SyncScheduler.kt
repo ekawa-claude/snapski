@@ -26,7 +26,7 @@ object SyncScheduler {
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         WorkManager.getInstance(context)
-            .enqueueUniqueWork(NOW, ExistingWorkPolicy.APPEND_OR_REPLACE, req)
+            .enqueueUniqueWork(NOW, ExistingWorkPolicy.REPLACE, req)
     }
 
     /** Safety net: pull/push every 30 min while paired. Worker no-ops when disabled. */
