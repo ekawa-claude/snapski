@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Check } from 'lucide-react'
+import { Check, CircleHelp, Eye, EyeOff } from 'lucide-react'
 import '../editor/index.css'
 
 const ICON_KEY = 'snapski_icon'
+const FAB_ENABLED_KEY = 'snapski_fab_enabled'
 type Style = 'minimal' | 'monster'
 
 function OptionCard({
@@ -44,19 +45,34 @@ function OptionCard({
 
 function Options(): JSX.Element {
   const [style, setStyle] = useState<Style>('minimal')
+  const [fabEnabled, setFabEnabled] = useState(true)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get(ICON_KEY).then((s) => {
       if (s[ICON_KEY] === 'monster' || s[ICON_KEY] === 'minimal') setStyle(s[ICON_KEY])
     })
+    chrome.storage.sync.get({ [FAB_ENABLED_KEY]: true }).then((s) => {
+      setFabEnabled(s[FAB_ENABLED_KEY] !== false)
+    })
   }, [])
+
+  const markSaved = (): void => {
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1400)
+  }
 
   const pick = (s: Style): void => {
     setStyle(s)
     chrome.storage.local.set({ [ICON_KEY]: s })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1400)
+    markSaved()
+  }
+
+  const toggleFab = (): void => {
+    const next = !fabEnabled
+    setFabEnabled(next)
+    void chrome.storage.sync.set({ [FAB_ENABLED_KEY]: next })
+    markSaved()
   }
 
   const url = (p: string): string => chrome.runtime.getURL(p)
@@ -69,8 +85,32 @@ function Options(): JSX.Element {
         {saved && <span className="ml-auto text-xs text-primary">Saved ✓</span>}
       </div>
       <p className="mb-6 text-sm text-muted-foreground">
-        Icon style for the toolbar and the floating button.
+        Customize how SnapSki appears while you browse.
       </p>
+
+      <button
+        onClick={toggleFab}
+        aria-pressed={fabEnabled}
+        className="mb-6 flex w-full items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-accent"
+      >
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${fabEnabled ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'}`}>
+          {fabEnabled ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+        </span>
+        <span className="flex-1">
+          <span className="block text-sm font-semibold">Floating button on websites</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            Capture controls remain available from the toolbar and keyboard shortcuts when hidden.
+          </span>
+        </span>
+        <span
+          className={`relative h-6 w-11 rounded-full transition-colors ${fabEnabled ? 'bg-primary' : 'bg-secondary'}`}
+          aria-hidden="true"
+        >
+          <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${fabEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+        </span>
+      </button>
+
+      <h2 className="mb-3 text-sm font-semibold">Icon style</h2>
 
       <div className="flex gap-3">
         <OptionCard
@@ -90,9 +130,16 @@ function Options(): JSX.Element {
       </div>
 
       <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-        Applies instantly. On already-open tabs the floating button updates after you reload the
-        page.
+        Changes apply instantly across your open tabs.
       </p>
+
+      <button
+        onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?replay=1') })}
+        className="mt-6 flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <CircleHelp className="h-4 w-4" />
+        Show getting started tutorial
+      </button>
     </div>
   )
 }

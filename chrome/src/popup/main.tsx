@@ -1,13 +1,32 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Camera, ScrollText, Loader2, Pencil, Settings, Crop } from 'lucide-react'
+import { Camera, ScrollText, Loader2, Pencil, Settings, Crop, Eye, EyeOff, CircleHelp } from 'lucide-react'
 import '../editor/index.css'
 
 type Mode = 'visible' | 'full'
+const FAB_ENABLED_KEY = 'snapski_fab_enabled'
 
 function Popup(): JSX.Element {
   const [busy, setBusy] = useState<Mode | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [fabEnabled, setFabEnabled] = useState(true)
+
+  useEffect(() => {
+    chrome.storage.sync.get({ [FAB_ENABLED_KEY]: true }).then((s) => {
+      setFabEnabled(s[FAB_ENABLED_KEY] !== false)
+    })
+  }, [])
+
+  const toggleFab = (): void => {
+    const next = !fabEnabled
+    setFabEnabled(next)
+    void chrome.storage.sync.set({ [FAB_ENABLED_KEY]: next })
+  }
+
+  const openTutorial = (): void => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?replay=1') })
+    window.close()
+  }
 
   /** Region selection runs in the page's content script — hand off and close. */
   const startRegion = async (): Promise<void> => {
@@ -99,6 +118,23 @@ function Popup(): JSX.Element {
         </button>
       </div>
 
+      <button
+        onClick={toggleFab}
+        aria-pressed={fabEnabled}
+        className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        {fabEnabled ? <Eye className="h-4 w-4 text-primary" /> : <EyeOff className="h-4 w-4" />}
+        <span className="flex-1">Floating button</span>
+        <span
+          className={`relative h-5 w-9 rounded-full transition-colors ${fabEnabled ? 'bg-primary' : 'bg-secondary'}`}
+          aria-hidden="true"
+        >
+          <span
+            className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${fabEnabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`}
+          />
+        </span>
+      </button>
+
       {error && <p className="mt-2 px-1 text-[11px] text-destructive">{error}</p>}
 
       <p className="mt-3 px-1 text-[10px] leading-relaxed text-muted-foreground">
@@ -106,6 +142,14 @@ function Popup(): JSX.Element {
         the visible area, <kbd className="rounded bg-secondary px-1 py-0.5 text-foreground">Alt+R</kbd> picks
         a region. Rebind at <span className="text-foreground">chrome://extensions/shortcuts</span>.
       </p>
+
+      <button
+        onClick={openTutorial}
+        className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <CircleHelp className="h-3.5 w-3.5" />
+        How SnapSki works
+      </button>
     </div>
   )
 }

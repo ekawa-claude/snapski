@@ -217,12 +217,15 @@ chrome.storage.onChanged.addListener((ch, area) => {
   if (area === 'local' && ch[ICON_KEY]) applyToolbarIcon(ch[ICON_KEY].newValue)
 })
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.contextMenus.create({
     id: 'snapski-capture',
     title: 'SnapSki: capture & annotate',
     contexts: ['page', 'image', 'selection']
   })
+  if (details.reason === 'install') {
+    void chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') })
+  }
 })
 
 chrome.contextMenus.onClicked.addListener((info) => {

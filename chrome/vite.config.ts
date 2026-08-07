@@ -55,6 +55,7 @@ export default defineConfig({
         editor: resolve(__dirname, 'editor.html'),
         popup: resolve(__dirname, 'popup.html'),
         options: resolve(__dirname, 'options.html'),
+        welcome: resolve(__dirname, 'welcome.html'),
         background: resolve(__dirname, 'src/background.ts')
       },
       output: {

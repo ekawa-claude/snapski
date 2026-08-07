@@ -8,6 +8,7 @@ export {} // module scope (avoids global name clashes with other scripts)
 
 const POS_KEY = 'snapski_fab'
 const ICON_KEY = 'snapski_icon' // 'minimal' | 'monster'
+const FAB_ENABLED_KEY = 'snapski_fab_enabled'
 const PRIMARY = '#6c6cf5'
 
 function svg(path: string): string {
@@ -88,14 +89,31 @@ const ICON_CAM = svg('<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16
 const ICON_FULL = svg('<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>')
 const ICON_SCREEN = svg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="m9 9 2 2 4-4"/>')
 const ICON_MASK = svg('<path d="M12 3c4.5 0 8 3 8 7 0 3-1.5 4.5-1.5 6.5S17 21 15 19.5 13 21 12 21s-1-3-3-1.5S5.5 18.5 5.5 16.5 4 13 4 10c0-4 3.5-7 8-7Z"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/>')
+const ICON_HIDE = svg('<path d="M10.7 5.1A9.8 9.8 0 0 1 12 5c5 0 9 5 9 7a11.8 11.8 0 0 1-1.7 2.7"/><path d="M6.6 6.6C4.4 8 3 10.3 3 12c0 2 4 7 9 7 1.4 0 2.7-.4 3.8-1"/><path d="m3 3 18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>')
 
 function init(): void {
   const host = document.createElement('div')
   host.id = 'snapski-host'
-  // Top of the stacking order, ignore page transforms.
-  host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;'
+  // Start hidden so a disabled FAB never flashes while storage is loading.
+  host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;display:none;'
   const root = host.attachShadow({ mode: 'open' })
   document.documentElement.appendChild(host)
+
+  let fabEnabled = true
+  let temporarilyHidden = false
+  const applyVisibility = (): void => {
+    host.style.display = fabEnabled && !temporarilyHidden ? '' : 'none'
+  }
+  chrome.storage.sync.get({ [FAB_ENABLED_KEY]: true }).then((s) => {
+    fabEnabled = s[FAB_ENABLED_KEY] !== false
+    applyVisibility()
+  })
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area === 'sync' && ch[FAB_ENABLED_KEY]) {
+      fabEnabled = ch[FAB_ENABLED_KEY].newValue !== false
+      applyVisibility()
+    }
+  })
 
   const style = document.createElement('style')
   style.textContent = css()
@@ -136,7 +154,8 @@ function init(): void {
     <button class="item" data-mode="full">${ICON_FULL}<span>Full page</span></button>
     <button class="item" data-mode="screen">${ICON_SCREEN}<span>Capture screen</span></button>
     <div class="sep"></div>
-    <button class="item toggle" data-act="toggle-icon">${ICON_MASK}<span>Mascot icon</span><span class="sw" data-sw></span></button>`
+    <button class="item toggle" data-act="toggle-icon">${ICON_MASK}<span>Mascot icon</span><span class="sw" data-sw></span></button>
+    <button class="item subdued" data-act="hide-fab">${ICON_HIDE}<span data-hide-label>Hide floating button</span></button>`
   root.appendChild(menu)
   isolate(menu)
 
@@ -174,6 +193,13 @@ function init(): void {
         const next = iconStyle === 'monster' ? 'minimal' : 'monster'
         chrome.storage.local.set({ [ICON_KEY]: next })
         reflectToggle(next) // optimistic; onChanged will confirm
+        return
+      }
+      if (btn.dataset.act === 'hide-fab') {
+        const label = btn.querySelector<HTMLElement>('[data-hide-label]')!
+        label.textContent = 'Hidden — restore from toolbar'
+        btn.disabled = true
+        setTimeout(() => void chrome.storage.sync.set({ [FAB_ENABLED_KEY]: false }), 700)
         return
       }
       const mode = btn.dataset.mode as 'region' | 'visible' | 'full' | 'screen'
@@ -259,7 +285,8 @@ function init(): void {
         audio: false
       })
       // Hide our FAB so it never lands in the shot, then grab a frame.
-      host.style.display = 'none'
+      temporarilyHidden = true
+      applyVisibility()
       const dataUrl = await grabFrame(stream)
       chrome.runtime.sendMessage({ type: 'screen-frame', dataUrl })
     } catch (e) {
@@ -270,13 +297,15 @@ function init(): void {
       }
     } finally {
       stream?.getTracks().forEach((t) => t.stop())
-      host.style.display = ''
+      temporarilyHidden = false
+      applyVisibility()
     }
   }
 
   // ---- region selection ----
   function startRegion(): void {
-    host.style.display = 'none' // keep FAB/menu out of the shot
+    temporarilyHidden = true
+    applyVisibility() // keep FAB/menu out of the shot
     const ov = document.createElement('div')
     ov.className = 'overlay'
     const box = document.createElement('div')
@@ -295,11 +324,14 @@ function init(): void {
     isolate(ov)
 
     let start: { x: number; y: number } | null = null
-    const cleanup = (): void => {
+    const cleanup = (restoreFab = true): void => {
       ov.remove()
       ovStyle.remove()
       document.removeEventListener('keydown', onKey, true)
-      host.style.display = '' // restore FAB
+      if (restoreFab) {
+        temporarilyHidden = false
+        applyVisibility()
+      }
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -332,24 +364,31 @@ function init(): void {
         w: Math.abs(e.clientX - start.x),
         h: Math.abs(e.clientY - start.y)
       }
-      cleanup()
+      cleanup(false)
       if (rect.w > 4 && rect.h > 4) {
         // FAB already hidden; give the page one paint to drop the overlay, then
         // ask the worker to capture+crop.
         requestAnimationFrame(() =>
           requestAnimationFrame(() =>
             setTimeout(
-              () =>
+              () => {
                 chrome.runtime.sendMessage({
                   type: 'capture',
                   mode: 'region',
                   rect,
                   dpr: window.devicePixelRatio || 1
-                }),
+                }).finally(() => {
+                  temporarilyHidden = false
+                  applyVisibility()
+                })
+              },
               60
             )
           )
         )
+      } else {
+        temporarilyHidden = false
+        applyVisibility()
       }
     })
   }
@@ -357,14 +396,16 @@ function init(): void {
   // ---- hide/show handshake from the worker (so the FAB never lands in a shot) ----
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     if (msg?.type === 'snapski-hide') {
-      host.style.display = 'none'
+      temporarilyHidden = true
+      applyVisibility()
       requestAnimationFrame(() =>
         requestAnimationFrame(() => setTimeout(() => sendResponse({ ok: true }), 50))
       )
       return true
     }
     if (msg?.type === 'snapski-show') {
-      host.style.display = ''
+      temporarilyHidden = false
+      applyVisibility()
       return false
     }
     if (msg?.type === 'snapski-start-region') {
@@ -400,6 +441,8 @@ function css(): string {
     background:transparent;color:#e7e7ea;font-size:13px;font-weight:500;border-radius:9px;
     cursor:pointer;white-space:nowrap;text-align:left;}
   .item:hover{background:${PRIMARY};color:#fff;}
+  .item:disabled{cursor:default;opacity:.72;}
+  .item:disabled:hover{background:transparent;color:#bdbdc4;}
   .item svg{width:17px;height:17px;flex:none;}
   .item:first-child{color:#fff;}
   .item:first-child svg{color:${PRIMARY};}
@@ -412,7 +455,9 @@ function css(): string {
     border-radius:50%;background:#fff;transition:transform .15s;}
   .item.toggle .sw.on{background:${PRIMARY};}
   .item.toggle .sw.on::after{transform:translateX(13px);}
-  .item.toggle:hover{background:rgba(255,255,255,.06);color:#fff;}`
+  .item.toggle:hover{background:rgba(255,255,255,.06);color:#fff;}
+  .item.subdued{color:#bdbdc4;}
+  .item.subdued:hover{background:rgba(255,255,255,.06);color:#fff;}`
 }
 
 function overlayCss(): string {
