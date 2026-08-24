@@ -11,6 +11,7 @@ import { randomUUID, createHash, randomBytes } from 'crypto'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { readFile, writeFile, unlink } from 'fs/promises'
 import { isFavorite, setFavorite } from './favorites'
+import { resolveInLibrary } from './library'
 
 interface MapEntry {
   id: string
@@ -321,8 +322,10 @@ export class SyncManager {
     const folder = this.getOutputFolder()
     for (const [name, e] of Object.entries(this.state.map)) {
       if (!e.wantSync || e.uploadedSeq != null) continue
-      const full = join(folder, name)
-      if (!existsSync(full)) continue
+      // Shots live in per-day subfolders now; a plain join would silently miss
+      // them and this loop would skip every upload without a word.
+      const full = resolveInLibrary(folder, name)
+      if (!full) continue
       try {
         const buf = await readFile(full)
         const seq = await this.uploadShot(e.id, name, buf)
@@ -390,6 +393,10 @@ export class SyncManager {
     const meta = c.meta
     if (!meta) return false
     const name = `Sync-${id}.png`
+    // Shots arriving from another device stay in the library root rather than
+    // today's folder: they were taken elsewhere, possibly days ago, and keeping
+    // this write path untouched keeps a working sync out of harm's way.
+    // resolveInLibrary finds them either way.
     const full = join(this.getOutputFolder(), name)
     try {
       const buf = await this.downloadFile(id)
@@ -426,9 +433,9 @@ export class SyncManager {
       this.persist()
       return false
     }
-    const full = join(this.getOutputFolder(), name)
+    const full = resolveInLibrary(this.getOutputFolder(), name)
     try {
-      await unlink(full)
+      if (full) await unlink(full)
     } catch {
       // already gone
     }

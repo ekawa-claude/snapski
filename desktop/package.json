@@ -1,6 +1,6 @@
 {
   "name": "snapski",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "SnapSki — a fast, modern Windows screen-capture tool",
   "main": "./out/main/index.js",
   "author": "Artur",
@@ -13,6 +13,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test:library": "node scripts/library.test.mjs",
     "pack": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder"
   },

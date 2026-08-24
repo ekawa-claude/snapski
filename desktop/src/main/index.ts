@@ -13,13 +13,14 @@ import {
   protocol
 } from 'electron'
 import { join, resolve, sep, basename } from 'path'
-import { writeFile, readdir, stat, copyFile } from 'fs/promises'
+import { writeFile, stat, copyFile } from 'fs/promises'
 import QRCode from 'qrcode'
 import { SyncManager } from './sync'
 import { createReadStream, existsSync } from 'fs'
 import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { loadSettings, saveSettings, ensureOutputFolder } from './settings'
+import { dayDir, listLibrary } from './library'
 import { captureRegion, captureFullscreen, captureRectFast } from './capture'
 import { copyNativeImageToClipboard, copyFileToClipboard } from './clipboard'
 import { getForegroundWindowRectDip } from './winutil'
@@ -214,11 +215,47 @@ function virtualBounds(): Rect {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+/** True while the main window is minimized for a capture we started. */
+let minimizedForCapture = false
+
+/**
+ * Get SnapSki out of the shot before capturing.
+ *
+ * Recording already did this; screenshots didn't, so starting one from the app
+ * left the window sitting in the picture. Minimizing also fixes window capture:
+ * showOverlay reads the foreground window to know what to grab, and with SnapSki
+ * in front that was SnapSki itself.
+ *
+ * Waits for the window to actually go, so the foreground reading below lands
+ * after the change and nothing catches the minimize animation.
+ */
+function minimizeForCapture(): Promise<void> {
+  const win = mainWindow
+  if (!win || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return Promise.resolve()
+  minimizedForCapture = true
+  return new Promise((resolve) => {
+    const done = (): void => resolve()
+    win.once('minimize', () => setTimeout(done, 120))
+    setTimeout(done, 500) // don't hang the capture if the event never lands
+    win.minimize()
+  })
+}
+
+/** Bring the window back when a capture ends without a result (Esc, cancel). */
+function restoreAfterCapture(): void {
+  if (!minimizedForCapture) return
+  minimizedForCapture = false
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+}
+
 async function showOverlay(): Promise<void> {
   if (overlayWindow) {
     overlayWindow.focus()
     return
   }
+  await minimizeForCapture()
   // Snapshot the foreground window BEFORE the overlay steals focus.
   pendingWindowRect = await getForegroundWindowRectDip()
 
@@ -299,7 +336,7 @@ async function finishCapture(image: Electron.NativeImage, notify = true): Promis
   if (settings.saveToFolder) {
     png = image.toPNG()
     ensureOutputFolder(settings.outputFolder)
-    savedPath = join(settings.outputFolder, timestampName('Snap', 'png'))
+    savedPath = join(dayDir(settings.outputFolder), timestampName('Snap', 'png'))
     await writeFile(savedPath, png)
   }
 
@@ -318,6 +355,7 @@ async function finishCapture(image: Electron.NativeImage, notify = true): Promis
     height: size.height
   }
   if (notify) {
+    minimizedForCapture = false // the window comes back with the result below
     mainWindow?.webContents.send('capture:done', result)
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -492,10 +530,11 @@ function startRecording(kind: CaptureKind, rectDip?: Rect): void {
   const hudRectDip = kind === 'region' ? (rectDip ?? null) : kind === 'window' ? pendingWindowRect : null
   const settings = loadSettings()
   ensureOutputFolder(settings.outputFolder)
-  const outFile = join(settings.outputFolder, timestampName('Rec', 'mp4'))
+  const outFile = join(dayDir(settings.outputFolder), timestampName('Rec', 'mp4'))
 
   // Get the app out of the shot, then start once the window is actually gone.
   if (mainWindow && !mainWindow.isMinimized()) mainWindow.minimize()
+  minimizedForCapture = false // recording owns the window state from here
 
   setTimeout(() => {
     const ok = recorder.startRecording({ kind, rect, outFile }, (file, success) => {
@@ -616,22 +655,7 @@ function registerIpc(): void {
   ipcMain.handle('history:list', async () => {
     const folder = loadSettings().outputFolder
     try {
-      const names = await readdir(folder)
-      const media = names.filter((n) => /\.(png|mp4)$/i.test(n))
-      const stated = await Promise.all(
-        media.map(async (name) => {
-          const full = join(folder, name)
-          try {
-            const s = await stat(full)
-            const type = name.toLowerCase().endsWith('.mp4') ? 'video' : 'image'
-            return { path: full, name, mtime: s.mtimeMs, type: type as 'image' | 'video' }
-          } catch {
-            return null
-          }
-        })
-      )
-      const items = stated.filter((x): x is NonNullable<typeof x> => x !== null)
-      items.sort((a, b) => b.mtime - a.mtime)
+      const items = await listLibrary(folder)
       // Sequential on purpose: image decodes are sync CPU work on the main
       // process, so yield to the event loop between items to keep the app
       // responsive while a cold cache warms up (cached items are just reads).
@@ -703,14 +727,12 @@ function registerIpc(): void {
     }
     const settings = loadSettings()
     ensureOutputFolder(settings.outputFolder)
+    const target = dayDir(settings.outputFolder)
     let imported = 0
     for (const src of files) {
       if (!/\.(png|jpe?g|webp|bmp)$/i.test(src)) continue
       try {
-        const dest = join(
-          settings.outputFolder,
-          uniqueTimestampName(settings.outputFolder, 'Import', 'png')
-        )
+        const dest = join(target, uniqueTimestampName(target, 'Import', 'png'))
         // Non-PNG sources are converted so the whole pipeline stays PNG.
         if (/\.png$/i.test(src)) {
           await copyFile(src, dest)
@@ -731,7 +753,7 @@ function registerIpc(): void {
   ipcMain.handle('video:export', async (_e, opts: VideoExportOpts) => {
     const settings = loadSettings()
     ensureOutputFolder(settings.outputFolder)
-    const outFile = join(settings.outputFolder, timestampName('Clip', 'mp4'))
+    const outFile = join(dayDir(settings.outputFolder), timestampName('Clip', 'mp4'))
     return new Promise((resolve) => {
       exportVideo(
         opts,
@@ -813,6 +835,10 @@ function registerIpc(): void {
   })
   ipcMain.handle('overlay:cancel', () => {
     closeOverlay()
+    // Deliberately only here, not on the overlay's 'closed' event: a successful
+    // capture also closes the overlay, and raising the window at that moment
+    // would put SnapSki into the shot it is about to grab.
+    restoreAfterCapture()
   })
 
   // Recording control from the renderer
