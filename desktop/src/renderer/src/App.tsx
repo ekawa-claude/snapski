@@ -608,6 +608,7 @@ function App(): JSX.Element {
         <EditorView
           capture={editing}
           onClose={closeEditor}
+          exportMode="single"
           onExport={async (dataUrl, opts) => {
             await window.snap.exportImage(dataUrl, opts)
             refreshHistory()

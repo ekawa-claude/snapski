@@ -57,6 +57,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <EditorView
       capture={capture}
       onClose={() => console.log('editor closed')}
+      exportMode="single"
       onExport={async (dataUrl, opts) => {
         await (
           window as unknown as {

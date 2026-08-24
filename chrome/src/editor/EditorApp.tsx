@@ -97,7 +97,9 @@ export function EditorApp(): JSX.Element {
    */
   const exportImage = async (
     dataUrl: string,
-    opts: { copy: boolean; download: boolean }
+    // The extension always renders split Copy/Download, so opts is always given;
+    // the default only satisfies the shared editor's wider signature.
+    opts: { copy: boolean; download: boolean } = { copy: true, download: true }
   ): Promise<void> => {
     if (opts.copy) {
       try {

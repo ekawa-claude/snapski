@@ -21,6 +21,9 @@ import {
 import { Button } from './ui/button'
 import { cn } from './lib/utils'
 
+export type ExportAction = 'copy' | 'download' | 'both'
+export type ExportMode = 'split' | 'single'
+
 export type Tool =
   | 'select'
   | 'crop'
@@ -75,9 +78,21 @@ interface Props {
   onDelete: () => void
   onCopy: () => void
   onDownload: () => void
+  /** Combined export, used only in 'single' mode. */
+  onBoth?: () => void
   onClose: () => void
-  busy: 'copy' | 'download' | null
-  doneNote: 'copy' | 'download' | null
+  busy: ExportAction | null
+  doneNote: ExportAction | null
+  /**
+   * How the host wants the finished image handed over.
+   *
+   * 'split' (default) — separate Copy and Download, for hosts where nothing
+   * reaches the disk on its own; the extension works that way.
+   * 'single' — one "Copy & save", for the desktop app, which already files every
+   * capture in the output folder. Splitting it there would mean two clicks to get
+   * what one used to do, and a "Download" button in an app that never downloads.
+   */
+  exportMode?: ExportMode
 }
 
 export function EditorToolbar(props: Props): JSX.Element {
@@ -121,35 +136,54 @@ export function EditorToolbar(props: Props): JSX.Element {
           >
             <Redo2 className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-1.5 gap-1.5"
-            onClick={props.onDownload}
-            disabled={props.busy != null}
-            title="Save a PNG to your SnapSki folder"
-          >
-            {props.doneNote === 'download' ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            {props.doneNote === 'download'
-              ? 'Saved'
-              : props.busy === 'download'
-                ? 'Saving…'
-                : 'Download'}
-          </Button>
-          <Button
-            size="sm"
-            className="gap-1.5"
-            onClick={props.onCopy}
-            disabled={props.busy != null}
-            title="Copy the image to the clipboard"
-          >
-            {props.doneNote === 'copy' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {props.doneNote === 'copy' ? 'Copied' : props.busy === 'copy' ? 'Copying…' : 'Copy'}
-          </Button>
+          {props.exportMode === 'single' ? (
+            <Button
+              size="sm"
+              className="ml-1.5 gap-1.5"
+              onClick={props.onBoth}
+              disabled={props.busy != null}
+              title="Copy the image and save it to your SnapSki folder"
+            >
+              {props.doneNote === 'both' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {props.doneNote === 'both'
+                ? 'Copied & saved'
+                : props.busy === 'both'
+                  ? 'Saving…'
+                  : 'Copy & save'}
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-1.5 gap-1.5"
+                onClick={props.onDownload}
+                disabled={props.busy != null}
+                title="Save a PNG to your SnapSki folder"
+              >
+                {props.doneNote === 'download' ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                {props.doneNote === 'download'
+                  ? 'Saved'
+                  : props.busy === 'download'
+                    ? 'Saving…'
+                    : 'Download'}
+              </Button>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={props.onCopy}
+                disabled={props.busy != null}
+                title="Copy the image to the clipboard"
+              >
+                {props.doneNote === 'copy' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {props.doneNote === 'copy' ? 'Copied' : props.busy === 'copy' ? 'Copying…' : 'Copy'}
+              </Button>
+            </>
+          )}
         </div>
       </header>
 

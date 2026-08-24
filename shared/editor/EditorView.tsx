@@ -17,13 +17,22 @@ import type { CaptureResult } from './types'
 import { blurRegion } from './pixelate'
 import { makeArrow, Arrow } from './arrow'
 import { Callout } from './Callout'
-import { EditorToolbar, type Tool } from './EditorToolbar'
+import { EditorToolbar, type Tool, type ExportAction, type ExportMode } from './EditorToolbar'
 
 interface Props {
   capture: CaptureResult
   onClose: () => void
-  /** Hand the final flattened PNG (data URL) to the host: copy and/or download. */
-  onExport: (dataUrl: string, opts: { copy: boolean; download: boolean }) => Promise<void>
+  /**
+   * Hand the final flattened PNG (data URL) to the host.
+   *
+   * `opts` names the action the user picked. It is omitted in 'single' export
+   * mode, where the host renders one combined button and decides for itself —
+   * the desktop app honours its own copy/save settings there, exactly as it did
+   * before the editor was shared.
+   */
+  onExport: (dataUrl: string, opts?: { copy: boolean; download: boolean }) => Promise<void>
+  /** See ExportMode in EditorToolbar. Defaults to 'split'. */
+  exportMode?: ExportMode
 }
 
 /** Pick black/white text for legibility against a given background color. */
@@ -134,7 +143,7 @@ const EXTRA_PROPS = [
   'bubbleStrokeWidth'
 ]
 
-export function EditorView({ capture, onClose, onExport }: Props): JSX.Element {
+export function EditorView({ capture, onClose, onExport, exportMode = 'split' }: Props): JSX.Element {
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const fcRef = useRef<Canvas | null>(null)
@@ -170,8 +179,8 @@ export function EditorView({ capture, onClose, onExport }: Props): JSX.Element {
   const [strokeWidth, setStrokeWidth] = useState(4)
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
-  const [busy, setBusy] = useState<'copy' | 'download' | null>(null)
-  const [doneNote, setDoneNote] = useState<'copy' | 'download' | null>(null)
+  const [busy, setBusy] = useState<ExportAction | null>(null)
+  const [doneNote, setDoneNote] = useState<ExportAction | null>(null)
   const [nextBadge, setNextBadge] = useState(1)
   const [textBg, setTextBg] = useState(false)
   const [textOutline, setTextOutline] = useState(true)
@@ -1072,7 +1081,7 @@ export function EditorView({ capture, onClose, onExport }: Props): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [undo, redo, deleteSelected, cropPending, applyCrop, cancelCrop, aiming, cancelAim])
 
-  const runExport = async (action: 'copy' | 'download'): Promise<void> => {
+  const runExport = async (action: ExportAction): Promise<void> => {
     const c = fcRef.current
     if (!c || busy) return
     setBusy(action)
@@ -1080,7 +1089,12 @@ export function EditorView({ capture, onClose, onExport }: Props): JSX.Element {
     tearDownArrowHandles()
     c.requestRenderAll()
     const dataUrl = c.toDataURL({ format: 'png', multiplier: 1, enableRetinaScaling: false })
-    await onExport(dataUrl, { copy: action === 'copy', download: action === 'download' })
+    // 'both' passes no opts on purpose: that is the host's cue to fall back to
+    // its own settings, which is what desktop's single button has always done.
+    await onExport(
+      dataUrl,
+      action === 'both' ? undefined : { copy: action === 'copy', download: action === 'download' }
+    )
     setBusy(null)
     setDoneNote(action)
     setTimeout(() => setDoneNote(null), 1600)
@@ -1112,6 +1126,8 @@ export function EditorView({ capture, onClose, onExport }: Props): JSX.Element {
         onDelete={deleteSelected}
         onCopy={() => runExport('copy')}
         onDownload={() => runExport('download')}
+        onBoth={() => runExport('both')}
+        exportMode={exportMode}
         onClose={onClose}
         busy={busy}
         doneNote={doneNote}
