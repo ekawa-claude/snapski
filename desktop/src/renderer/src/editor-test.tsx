@@ -46,7 +46,7 @@ import('fabric').then((fabricLib) => {
 
 // --- mock the preload bridge ---
 ;(window as unknown as { snap: unknown }).snap = {
-  exportImage: async (dataUrl: string) => {
+  exportImage: async (dataUrl: string, _opts?: { copy: boolean; download: boolean }) => {
     ;(window as unknown as { __exported?: string }).__exported = dataUrl
     return { dataUrl, savedPath: 'C:/test/edited.png', width: 900, height: 560 }
   }
@@ -54,6 +54,16 @@ import('fabric').then((fabricLib) => {
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <EditorView capture={capture} onClose={() => console.log('editor closed')} />
+    <EditorView
+      capture={capture}
+      onClose={() => console.log('editor closed')}
+      onExport={async (dataUrl, opts) => {
+        await (
+          window as unknown as {
+            snap: { exportImage: (d: string, o?: unknown) => Promise<unknown> }
+          }
+        ).snap.exportImage(dataUrl, opts)
+      }}
+    />
   </React.StrictMode>
 )

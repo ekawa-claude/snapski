@@ -321,19 +321,26 @@ function uniqueTimestampName(folder: string, prefix: string, ext: string): strin
   }
 }
 
-async function finishCapture(image: Electron.NativeImage, notify = true): Promise<CaptureResult> {
+async function finishCapture(
+  image: Electron.NativeImage,
+  notify = true,
+  opts?: { copy: boolean; download: boolean }
+): Promise<CaptureResult> {
   const settings = loadSettings()
   const size = image.getSize()
 
+  const shouldCopy = opts !== undefined ? opts.copy : settings.copyToClipboard
+  const shouldSave = opts !== undefined ? opts.download : settings.saveToFolder
+
   // Hand the bitmap straight to the clipboard — no PNG encode/decode round-trip.
-  if (settings.copyToClipboard) copyNativeImageToClipboard(image)
+  if (shouldCopy) copyNativeImageToClipboard(image)
 
   // Encode PNG at most once, and only when something actually needs it: the file
   // on disk, or the data URL the renderer shows. Each encode of a 4K frame costs
   // hundreds of ms on the main thread, so we skip the ones we don't need.
   let png: Buffer | null = null
   let savedPath: string | null = null
-  if (settings.saveToFolder) {
+  if (shouldSave) {
     png = image.toPNG()
     ensureOutputFolder(settings.outputFolder)
     savedPath = join(dayDir(settings.outputFolder), timestampName('Snap', 'png'))
@@ -775,10 +782,13 @@ function registerIpc(): void {
   })
 
   // Editor → re-export edited image (re-copy to clipboard + re-save to folder)
-  ipcMain.handle('image:export', async (_e, dataUrl: string) => {
-    const image = nativeImage.createFromDataURL(dataUrl)
-    return finishCapture(image, false)
-  })
+  ipcMain.handle(
+    'image:export',
+    async (_e, dataUrl: string, opts?: { copy: boolean; download: boolean }) => {
+      const image = nativeImage.createFromDataURL(dataUrl)
+      return finishCapture(image, false, opts)
+    }
+  )
 
   // Window controls (frameless main window)
   ipcMain.handle('win:minimize', () => mainWindow?.minimize())

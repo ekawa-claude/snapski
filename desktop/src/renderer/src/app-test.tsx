@@ -85,7 +85,10 @@ const mock = {
     width: 640,
     height: 400
   }),
-  exportImage: async (dataUrl: string): Promise<CaptureResult> => ({
+  exportImage: async (
+    dataUrl: string,
+    _opts?: { copy: boolean; download: boolean }
+  ): Promise<CaptureResult> => ({
     dataUrl,
     savedPath: 'C:/test/edited.png',
     width: 640,

@@ -604,7 +604,16 @@ function App(): JSX.Element {
         />
       )}
 
-      {editing && <EditorView capture={editing} onClose={closeEditor} />}
+      {editing && (
+        <EditorView
+          capture={editing}
+          onClose={closeEditor}
+          onExport={async (dataUrl, opts) => {
+            await window.snap.exportImage(dataUrl, opts)
+            refreshHistory()
+          }}
+        />
+      )}
 
       {editingVideo && (
         <VideoEditorView

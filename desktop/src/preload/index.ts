@@ -57,8 +57,8 @@ const api = {
   },
 
   // editor export
-  exportImage: (dataUrl: string): Promise<CaptureResult> =>
-    ipcRenderer.invoke('image:export', dataUrl),
+  exportImage: (dataUrl: string, opts?: { copy: boolean; download: boolean }): Promise<CaptureResult> =>
+    ipcRenderer.invoke('image:export', dataUrl, opts),
 
   // auto-update
   onUpdateStatus: (cb: (s: UpdateStatus) => void): (() => void) => {
