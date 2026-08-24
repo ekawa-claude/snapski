@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import type { AppSettings, CaptureMode, CaptureResult, HistoryItem } from '@shared/types'
 import { SettingsPanel } from './components/SettingsPanel'
 import { WindowControls } from './components/WindowControls'
-import { EditorView } from './components/editor/EditorView'
+import { EditorView } from '@editor/EditorView'
 import { VideoEditorView } from './components/video/VideoEditorView'
 import { GalleryViewer } from './components/GalleryViewer'
 

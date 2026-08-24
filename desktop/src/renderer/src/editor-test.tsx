@@ -2,7 +2,7 @@
 // (no Electron). Provides a mock window.snap and a sample image.
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { EditorView } from './components/editor/EditorView'
+import { EditorView } from '@editor/EditorView'
 import type { CaptureResult } from '@shared/types'
 import './index.css'
 

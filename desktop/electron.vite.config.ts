@@ -26,7 +26,15 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@': resolve('src/renderer/src')
+        '@': resolve('src/renderer/src'),
+        '@editor': resolve(__dirname, '../shared/editor'),
+        'lucide-react': resolve(__dirname, 'node_modules/lucide-react'),
+        fabric: resolve(__dirname, 'node_modules/fabric'),
+        clsx: resolve(__dirname, 'node_modules/clsx'),
+        'tailwind-merge': resolve(__dirname, 'node_modules/tailwind-merge'),
+        'class-variance-authority': resolve(__dirname, 'node_modules/class-variance-authority'),
+        react: resolve(__dirname, 'node_modules/react'),
+        'react-dom': resolve(__dirname, 'node_modules/react-dom')
       }
     },
     plugins: [react()],
