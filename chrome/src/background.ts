@@ -1,5 +1,6 @@
 /// <reference types="chrome" />
 import { shotPath } from './shared/shot-path'
+import { addShot, getShot, markSaved } from './shared/shots-db'
 
 // SnapSki for Chrome — service worker.
 // Responsibilities: capture the active tab (visible area or full scroll-stitched
@@ -9,7 +10,6 @@ import { shotPath } from './shared/shot-path'
 
 const CAPTURE_DELAY_MS = 300 // captureVisibleTab is rate-limited (~2/sec)
 const AUTOSAVE_KEY = 'snapski_autosave' // write the PNG to disk on every capture
-const CAP_TTL_MS = 30 * 60 * 1000 // abandoned captures are swept after this
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -167,12 +167,14 @@ function openEditor(id: string): Promise<chrome.tabs.Tab> {
  * Store, a page loaded before the extension), we open the editor as before.
  */
 async function deliver(tabId: number | undefined, dataUrl: string): Promise<void> {
-  const id = crypto.randomUUID()
-  await chrome.storage.local.set({ [`cap_${id}`]: { dataUrl, ts: Date.now() } })
+  const { id } = await addShot(dataUrl)
 
   const store = await chrome.storage.sync.get({ [AUTOSAVE_KEY]: false })
   const autosaved = store[AUTOSAVE_KEY] === true
-  if (autosaved) await saveShot(dataUrl)
+  if (autosaved) {
+    await saveShot(dataUrl)
+    await markSaved(id)
+  }
 
   if (tabId != null) {
     try {
@@ -211,27 +213,6 @@ async function captureAndDeliver(
   await deliver(tab.id, dataUrl)
 }
 
-/** Read back a stored capture (the toast keeps its id, not the pixels). */
-async function readCap(id: string): Promise<string | null> {
-  const key = `cap_${id}`
-  const store = await chrome.storage.local.get(key)
-  return (store[key] as { dataUrl?: string } | undefined)?.dataUrl ?? null
-}
-
-/** Drop captures nobody acted on, so dismissed toasts don't pile up on disk. */
-async function sweepCaptures(): Promise<void> {
-  const all = await chrome.storage.local.get(null)
-  const stale = Object.entries(all)
-    .filter(([k, v]) => {
-      if (!k.startsWith('cap_')) return false
-      const ts = (v as { ts?: number })?.ts
-      return typeof ts !== 'number' || Date.now() - ts > CAP_TTL_MS
-    })
-    .map(([k]) => k)
-  if (stale.length) await chrome.storage.local.remove(stale)
-}
-void sweepCaptures()
-
 // --- triggers -------------------------------------------------------------
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -254,17 +235,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false
   }
   if (msg?.type === 'save-shot') {
-    void readCap(msg.id)
-      .then(async (dataUrl) => {
-        if (!dataUrl) return sendResponse({ ok: false, error: 'That capture has expired' })
-        sendResponse({ ok: true, folder: await saveShot(dataUrl) })
+    // Only the content script needs this detour: it lives on the page's origin,
+    // so it can't reach the extension's IndexedDB. Extension pages read directly.
+    void getShot(msg.id)
+      .then(async (shot) => {
+        if (!shot) return sendResponse({ ok: false, error: 'That capture is gone' })
+        const folder = await saveShot(shot.dataUrl)
+        await markSaved(shot.id)
+        sendResponse({ ok: true, folder })
       })
       .catch((e) => sendResponse({ ok: false, error: String(e?.message ?? e) }))
     return true
-  }
-  if (msg?.type === 'discard-shot') {
-    void chrome.storage.local.remove(`cap_${msg.id}`)
-    return false
   }
   return false
 })

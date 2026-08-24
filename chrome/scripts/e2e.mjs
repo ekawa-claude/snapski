@@ -161,9 +161,20 @@ try {
   await page.send('Page.bringToFront')
   await wait(600)
 
-  const caps = () =>
+  // Read the history straight out of IndexedDB — the store module is bundled, so
+  // its exports aren't reachable from an evaluate().
+  const history = () =>
     sw.evaluate(
-      `chrome.storage.local.get(null).then(s => Object.keys(s).filter(k => k.startsWith('cap_')))`,
+      `new Promise((res, rej) => {
+        const r = indexedDB.open('snapski')
+        r.onsuccess = () => {
+          const db = r.result
+          const q = db.transaction('shots', 'readonly').objectStore('shots').getAll()
+          q.onsuccess = () => res(q.result.map(s => ({ id: s.id, saved: !!s.saved, thumb: s.thumb.length, w: s.width })))
+          q.onerror = () => rej(q.error)
+        }
+        r.onerror = () => rej(r.error)
+      })`,
       true
     )
 
@@ -209,19 +220,21 @@ try {
   }
   check('toast closed after Annotate', (await page.evaluate(TOAST_STATE))?.open === false)
 
-  // --- 4. dismissing a shot drops it from storage --------------------------
-  const stored = await caps()
-  if (stored.length) await sw.evaluate(`chrome.storage.local.remove(${JSON.stringify(stored)})`, true)
+  // --- 4. every capture enters the history, dismissed ones included ---------
+  const before4 = await history()
+  // Two captures so far: step 1 (saved) and step 3 (annotated).
+  check('captures are kept in the history', before4.length === 2, `${before4.length} rows`)
+  check('history rows carry a thumbnail', before4.every((r) => r.thumb > 500))
+  check('saved shot is flagged in the history', before4.some((r) => r.saved))
+
   await captureVia(page, 'visible')
-  const pending = await caps()
-  check('capture is stored while the toast is up', pending.length === 1, pending.join(', '))
   await page.evaluate(clickToast('close'))
   await wait(800)
-  const left = await caps()
+  const after4 = await history()
   check(
-    'dismissed capture is discarded',
-    left.length < pending.length,
-    `${pending.length} → ${left.length}`
+    'dismissing the toast does NOT lose the shot',
+    after4.length === before4.length + 1,
+    `${before4.length} → ${after4.length}`
   )
 
   // --- 5. autosave writes on every capture ---------------------------------
@@ -233,6 +246,23 @@ try {
   check('autosave is reflected in the toast', /saved to disk/.test(t?.status ?? ''), t?.status)
   check('autosave hides the Save button', t?.save === false)
   check('autosave wrote a second PNG into the day folder', newFiles().length === 2, newFiles().join(', '))
+
+  // --- 6. the editor opens on its own and lists the history ----------------
+  const extId = swTarget.url.split('/')[2]
+  await page.send('Page.navigate', { url: `chrome-extension://${extId}/editor.html` })
+  await wait(3000)
+  const strip = await page.evaluate(`(() => {
+    const items = document.querySelectorAll('[data-strip-item]')
+    const canvas = document.querySelector('canvas')
+    return { items: items.length, hasCanvas: !!canvas, text: document.body.innerText.slice(0, 60) }
+  })()`)
+  check('editor without ?id loads the newest capture', strip.hasCanvas === true, JSON.stringify(strip))
+  check('history strip lists the captures', strip.items === (await history()).length, JSON.stringify(strip))
+
+  const edShot = await page.send('Page.captureScreenshot', { format: 'png' })
+  const edPath = join(import.meta.dirname, '..', 'e2e-editor.png')
+  writeFileSync(edPath, Buffer.from(edShot.result.data, 'base64'))
+  console.log('screenshot:', edPath)
 
   // Remove only the files this run created.
   for (const f of newFiles()) rmSync(join(DOWNLOADS, f), { force: true })

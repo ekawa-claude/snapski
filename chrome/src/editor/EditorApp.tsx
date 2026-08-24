@@ -1,8 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ImageOff, Link2, FolderOpen, Trash2, X, Check } from 'lucide-react'
 import { EditorView } from './components/editor/EditorView'
+import { ShotStrip } from './ShotStrip'
 import type { CaptureResult } from './types'
 import { shotPath } from '../shared/shot-path'
+import {
+  addShot,
+  clearShots,
+  deleteShot,
+  getShot,
+  listShots,
+  markSaved,
+  type ShotSummary
+} from '../shared/shots-db'
 
 /** Convert a data URL into a Blob so it can go on the clipboard / to downloads. */
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
@@ -30,20 +40,60 @@ function waitForDownload(id: number): Promise<string | null> {
 }
 
 export function EditorApp(): JSX.Element {
+  const [shots, setShots] = useState<ShotSummary[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [capture, setCapture] = useState<CaptureResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<SavedFile | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const flashNote = (msg: string): void => {
     setNote(msg)
     setTimeout(() => setNote(null), 1800)
   }
 
+  const refreshStrip = useCallback(async (): Promise<ShotSummary[]> => {
+    const rows = await listShots()
+    setShots(rows)
+    return rows
+  }, [])
+
+  /** Load one shot onto the canvas. Remembered in the URL so reloads stay put. */
+  const open = useCallback(async (id: string): Promise<void> => {
+    const shot = await getShot(id)
+    if (!shot) {
+      setError('That capture is no longer in your history.')
+      return
+    }
+    setError(null)
+    setActiveId(shot.id)
+    setSaved(null)
+    setCapture({ dataUrl: shot.dataUrl, width: shot.width, height: shot.height })
+    const url = new URL(location.href)
+    url.searchParams.set('id', shot.id)
+    history.replaceState(null, '', url)
+  }, [])
+
+  useEffect(() => {
+    void (async () => {
+      const rows = await refreshStrip()
+      // ?id= comes from the toast's Annotate; without it — as when the editor is
+      // opened on its own from the popup — fall back to the newest capture.
+      const wanted = new URLSearchParams(location.search).get('id') ?? rows[0]?.id
+      if (wanted) await open(wanted)
+      else setError('No captures yet. Take a screenshot and it will show up here.')
+      setLoading(false)
+    })()
+  }, [open, refreshStrip])
+
   /**
    * Export the finished annotation. Either action is independent: copy the PNG to
    * the clipboard (best-effort — the editor tab is focused, so the async Clipboard
    * API is allowed) and/or save it via the downloads API into today's folder.
+   *
+   * The edited image also enters the history as a NEW capture, so annotating never
+   * overwrites the original and the result stays findable in the strip.
    */
   const exportImage = async (
     dataUrl: string,
@@ -58,6 +108,7 @@ export function EditorApp(): JSX.Element {
         console.warn('clipboard write failed', e)
       }
     }
+    const edited = await addShot(dataUrl)
     if (opts.download) {
       const id = await chrome.downloads.download({
         url: dataUrl,
@@ -66,52 +117,60 @@ export function EditorApp(): JSX.Element {
       })
       const filename = await waitForDownload(id)
       if (filename) setSaved({ id, filename })
+      await markSaved(edited.id)
+    }
+    await refreshStrip()
+  }
+
+  const removeShot = async (id: string): Promise<void> => {
+    await deleteShot(id)
+    const rows = await refreshStrip()
+    if (id !== activeId) return
+    if (rows[0]) await open(rows[0].id)
+    else {
+      setCapture(null)
+      setActiveId(null)
+      setError('No captures yet. Take a screenshot and it will show up here.')
     }
   }
 
-  useEffect(() => {
-    const id = new URLSearchParams(location.search).get('id')
-    if (!id) {
-      setError('No capture id — open the editor from the SnapSki popup.')
-      return
-    }
-    const key = `cap_${id}`
-    chrome.storage.local.get(key).then((store) => {
-      const cap = store[key] as CaptureResult | undefined
-      if (!cap) {
-        setError('That capture has expired. Take a new screenshot.')
-        return
-      }
-      setCapture(cap)
-      // One-shot: free the storage once we own the pixels.
-      void chrome.storage.local.remove(key)
-    })
-  }, [])
-
-  if (error) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
-        <ImageOff className="h-10 w-10 opacity-60" />
-        <p className="text-sm">{error}</p>
-      </div>
-    )
+  const clearAll = async (): Promise<void> => {
+    if (!confirm('Delete every capture in your history? This cannot be undone.')) return
+    await clearShots()
+    await refreshStrip()
+    setCapture(null)
+    setActiveId(null)
+    setError('No captures yet. Take a screenshot and it will show up here.')
   }
 
-  if (!capture) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Loading capture…
-      </div>
-    )
-  }
+  const strip = (
+    <ShotStrip
+      shots={shots}
+      activeId={activeId}
+      onPick={(id) => void open(id)}
+      onDelete={(id) => void removeShot(id)}
+      onClear={() => void clearAll()}
+    />
+  )
 
   return (
-    <>
-      <EditorView capture={capture} onClose={() => window.close()} onExport={exportImage} />
+    <div className="flex h-full flex-col bg-background">
+      <div className="relative flex-1 overflow-hidden">
+        {capture ? (
+          <EditorView capture={capture} onClose={() => window.close()} onExport={exportImage} />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+            <ImageOff className="h-10 w-10 opacity-60" />
+            <p className="text-sm">{loading ? 'Loading captures…' : error}</p>
+          </div>
+        )}
+      </div>
+
+      {strip}
 
       {/* Post-save actions for the file on disk: copy its path, reveal, delete. */}
       {saved && (
-        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-1 rounded-xl border border-border/70 bg-popover/95 p-1.5 pl-3 shadow-2xl backdrop-blur">
+        <div className="fixed bottom-[136px] right-4 z-50 flex items-center gap-1 rounded-xl border border-border/70 bg-popover/95 p-1.5 pl-3 shadow-2xl backdrop-blur">
           <span
             className="max-w-[260px] truncate text-xs text-muted-foreground"
             title={saved.filename}
@@ -157,12 +216,12 @@ export function EditorApp(): JSX.Element {
       )}
 
       {note && (
-        <div className="fixed bottom-20 right-4 z-50 flex items-center gap-1.5 rounded-full border border-border/70 bg-popover/95 px-3 py-1.5 text-xs font-medium shadow-xl backdrop-blur">
+        <div className="fixed bottom-[188px] right-4 z-50 flex items-center gap-1.5 rounded-full border border-border/70 bg-popover/95 px-3 py-1.5 text-xs font-medium shadow-xl backdrop-blur">
           <Check className="h-3.5 w-3.5 text-emerald-400" />
           {note}
         </div>
       )}
-    </>
+    </div>
   )
 }
 

@@ -30,7 +30,7 @@ const steps = [
   {
     eyebrow: 'Annotate',
     title: 'Make the point instantly',
-    text: 'Every shot offers Annotate and Save on the way past. Open the editor for arrows, numbered steps, text, blur, highlights and spotlight — everything stays editable until you copy or download the result.'
+    text: 'Every shot offers Annotate and Save on the way past, and stays in Recent captures at the bottom of the editor — dismissing a toast never loses a screenshot. Annotate with arrows, numbered steps, text, blur, highlights and spotlight.'
   },
   {
     eyebrow: 'Make it yours',

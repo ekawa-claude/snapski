@@ -143,8 +143,6 @@ function initToast(): (shot: Shot) => void {
   const copyBtn = card.querySelector<HTMLButtonElement>('[data-act="copy"]')!
 
   let current: Shot | null = null
-  /** Set once the shot has somewhere else to live, so dismissing won't drop it. */
-  let consumed = false
   let timer = 0
 
   const setStatus = (text: string, bad = false): void => {
@@ -153,14 +151,12 @@ function initToast(): (shot: Shot) => void {
   }
   const arm = (): void => {
     window.clearTimeout(timer)
-    timer = window.setTimeout(() => hide(true), TOAST_MS)
+    timer = window.setTimeout(() => hide(), TOAST_MS)
   }
-  const hide = (discard: boolean): void => {
+  // Dismissing loses nothing: every capture is in the history strip.
+  const hide = (): void => {
     window.clearTimeout(timer)
     card.classList.remove('open')
-    if (current && discard && !consumed) {
-      chrome.runtime.sendMessage({ type: 'discard-shot', id: current.id }).catch(() => {})
-    }
     current = null
   }
 
@@ -187,11 +183,10 @@ function initToast(): (shot: Shot) => void {
       const shot = current
       if (!shot) return
       const act = btn.dataset.act
-      if (act === 'close') return hide(true)
+      if (act === 'close') return hide()
       if (act === 'annotate') {
-        consumed = true // the editor tab owns the capture now
         chrome.runtime.sendMessage({ type: 'open-editor', id: shot.id }).catch(() => {})
-        return hide(false)
+        return hide()
       }
       if (act === 'copy') {
         void copy(shot.dataUrl).then((ok) => {
@@ -213,7 +208,6 @@ function initToast(): (shot: Shot) => void {
             if (current?.id !== shot.id) return
             btn.disabled = false
             if (res?.ok) {
-              consumed = true
               saveBtn.hidden = true
               setStatus(`Saved to ${res.folder ?? 'Downloads/SnapSki'}`)
               arm()
@@ -231,7 +225,6 @@ function initToast(): (shot: Shot) => void {
 
   return (shot: Shot) => {
     current = shot
-    consumed = false
     thumbEl.src = shot.dataUrl
     saveBtn.hidden = shot.autosaved
     saveBtn.disabled = false

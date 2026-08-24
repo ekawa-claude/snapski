@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Check, CircleHelp, Eye, EyeOff, HardDriveDownload } from 'lucide-react'
+import { Check, CircleHelp, Eye, EyeOff, HardDriveDownload, Trash2 } from 'lucide-react'
+import { clearShots, historySize } from '../shared/shots-db'
 import '../editor/index.css'
 
 const ICON_KEY = 'snapski_icon'
@@ -89,6 +90,7 @@ function Options(): JSX.Element {
   const [style, setStyle] = useState<Style>('minimal')
   const [fabEnabled, setFabEnabled] = useState(true)
   const [autosave, setAutosave] = useState(false)
+  const [history, setHistory] = useState<{ count: number; bytes: number } | null>(null)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -101,7 +103,15 @@ function Options(): JSX.Element {
         setFabEnabled(s[FAB_ENABLED_KEY] !== false)
         setAutosave(s[AUTOSAVE_KEY] === true)
       })
+    void historySize().then(setHistory)
   }, [])
+
+  const wipeHistory = async (): Promise<void> => {
+    if (!confirm('Delete every capture SnapSki has kept? This cannot be undone.')) return
+    await clearShots()
+    setHistory(await historySize())
+    markSaved()
+  }
 
   const markSaved = (): void => {
     setSaved(true)
@@ -156,6 +166,30 @@ function Options(): JSX.Element {
           hint="Off by default: shots go straight to the clipboard, and Save on the toast writes the ones you want to keep. Turn this on and every capture also lands in Downloads/SnapSki, filed under today's date — including ones you then annotate, which produces a second file."
           onToggle={toggleAutosave}
         />
+      </div>
+
+      <h2 className="mb-3 text-sm font-semibold">Capture history</h2>
+      <div className="mb-6 flex items-center gap-4 rounded-2xl border border-border bg-card p-4">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary text-muted-foreground">
+          <Trash2 className="h-5 w-5" />
+        </span>
+        <span className="flex-1">
+          <span className="block text-sm font-semibold">
+            {history ? `${history.count} capture${history.count === 1 ? '' : 's'} kept in this browser` : 'Counting…'}
+          </span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            {history && history.count > 0
+              ? `About ${(history.bytes / (1024 * 1024)).toFixed(1)} MB. Screenshots stay on this device — nothing is uploaded — and the oldest are dropped automatically. Clear them whenever you like.`
+              : 'Captures are kept here so the strip in the editor can find them again. Nothing is uploaded.'}
+          </span>
+        </span>
+        <button
+          onClick={() => void wipeHistory()}
+          disabled={!history || history.count === 0}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/60 hover:text-destructive disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-foreground"
+        >
+          Clear
+        </button>
       </div>
 
       <h2 className="mb-3 text-sm font-semibold">Icon style</h2>

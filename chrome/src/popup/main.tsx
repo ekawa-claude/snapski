@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Camera, ScrollText, Loader2, Pencil, Settings, Crop, Eye, EyeOff, CircleHelp } from 'lucide-react'
+import { listShots, type ShotSummary } from '../shared/shots-db'
 import '../editor/index.css'
 
 type Mode = 'visible' | 'full'
@@ -10,12 +11,21 @@ function Popup(): JSX.Element {
   const [busy, setBusy] = useState<Mode | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [fabEnabled, setFabEnabled] = useState(true)
+  const [recent, setRecent] = useState<ShotSummary[]>([])
 
   useEffect(() => {
     chrome.storage.sync.get({ [FAB_ENABLED_KEY]: true }).then((s) => {
       setFabEnabled(s[FAB_ENABLED_KEY] !== false)
     })
+    void listShots(6).then(setRecent)
   }, [])
+
+  /** Open the editor — on a specific capture, or on the newest one. */
+  const openEditor = (id?: string): void => {
+    const url = chrome.runtime.getURL(`editor.html${id ? `?id=${id}` : ''}`)
+    void chrome.tabs.create({ url })
+    window.close()
+  }
 
   const toggleFab = (): void => {
     const next = !fabEnabled
@@ -47,7 +57,7 @@ function Popup(): JSX.Element {
     try {
       const res = await chrome.runtime.sendMessage({ type: 'capture', mode })
       if (res?.ok) {
-        window.close() // editor tab is opening; nothing left to do here
+        window.close() // the toast takes over in the page; nothing left to do here
       } else {
         setError(res?.error ?? 'Capture failed')
         setBusy(null)
@@ -117,6 +127,34 @@ function Popup(): JSX.Element {
           </span>
         </button>
       </div>
+
+      {recent.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center gap-2 px-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Recent
+            </span>
+            <button
+              onClick={() => openEditor()}
+              className="ml-auto text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Open editor
+            </button>
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1">
+            {recent.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => openEditor(s.id)}
+                title={`${s.width}×${s.height} — open in the editor`}
+                className="h-[42px] w-[70px] shrink-0 overflow-hidden rounded-md border border-border/70 transition-colors hover:border-primary"
+              >
+                <img src={s.thumb} alt="" className="h-full w-full bg-black/40 object-cover" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <button
         onClick={toggleFab}

@@ -22,3 +22,4 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 e2e-toast.png
+e2e-editor.png
