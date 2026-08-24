@@ -153,7 +153,7 @@ function Options(): JSX.Element {
           on={autosave}
           icon={<HardDriveDownload className="h-5 w-5" />}
           title="Save every capture to disk"
-          hint="Off by default: shots go straight to the clipboard, and Save on the toast writes the ones you want to keep. Turn this on and every capture also lands in Downloads/SnapSki — including ones you then annotate, which produces a second file."
+          hint="Off by default: shots go straight to the clipboard, and Save on the toast writes the ones you want to keep. Turn this on and every capture also lands in Downloads/SnapSki, filed under today's date — including ones you then annotate, which produces a second file."
           onToggle={toggleAutosave}
         />
       </div>

@@ -215,7 +215,7 @@ function initToast(): (shot: Shot) => void {
             if (res?.ok) {
               consumed = true
               saveBtn.hidden = true
-              setStatus('Saved to Downloads/SnapSki')
+              setStatus(`Saved to ${res.folder ?? 'Downloads/SnapSki'}`)
               arm()
             } else {
               setStatus(res?.error ?? "Couldn't save", true)

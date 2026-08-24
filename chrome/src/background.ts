@@ -1,5 +1,6 @@
 /// <reference types="chrome" />
-export {} // module scope (avoids global name clashes with other scripts)
+import { shotPath } from './shared/shot-path'
+
 // SnapSki for Chrome — service worker.
 // Responsibilities: capture the active tab (visible area or full scroll-stitched
 // page), then DELIVER the result: the shot goes to the in-page toast, which
@@ -140,21 +141,14 @@ interface CaptureOpts {
   dpr?: number
 }
 
-function stamp(): string {
-  const d = new Date()
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(
-    d.getMinutes()
-  )}-${p(d.getSeconds())}`
-}
-
-/** Write a PNG data URL into Downloads/SnapSki/. Returns the download id. */
-function saveShot(dataUrl: string): Promise<number> {
-  return chrome.downloads.download({
-    url: dataUrl,
-    filename: `SnapSki/snapski_${stamp()}.png`,
-    saveAs: false
-  })
+/**
+ * Write a PNG data URL into today's folder under Downloads/SnapSki/.
+ * Returns the folder it landed in, so the toast can name it.
+ */
+async function saveShot(dataUrl: string): Promise<string> {
+  const path = shotPath()
+  await chrome.downloads.download({ url: dataUrl, filename: path, saveAs: false })
+  return `Downloads/${path.slice(0, path.lastIndexOf('/'))}`
 }
 
 function openEditor(id: string): Promise<chrome.tabs.Tab> {
@@ -263,8 +257,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     void readCap(msg.id)
       .then(async (dataUrl) => {
         if (!dataUrl) return sendResponse({ ok: false, error: 'That capture has expired' })
-        await saveShot(dataUrl)
-        sendResponse({ ok: true })
+        sendResponse({ ok: true, folder: await saveShot(dataUrl) })
       })
       .catch((e) => sendResponse({ ok: false, error: String(e?.message ?? e) }))
     return true

@@ -29,7 +29,11 @@ const CHROME =
     'chrome-win64',
     'chrome.exe'
   )
-const DOWNLOADS = join(homedir(), 'Downloads', 'SnapSki')
+// Shots are filed under Downloads/SnapSki/<today>; assert that folder exactly.
+const d = new Date()
+const pad = (n) => String(n).padStart(2, '0')
+const DAY = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+const DOWNLOADS = join(homedir(), 'Downloads', 'SnapSki', DAY)
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 const list = () => fetch(`http://127.0.0.1:${PORT}/json`).then((r) => r.json())
@@ -186,7 +190,8 @@ try {
   t = await page.evaluate(TOAST_STATE)
   check('Save reports success', /Saved/.test(t?.status ?? ''), t?.status)
   check('Save button retires after saving', t?.save === false)
-  check('Save wrote a PNG to Downloads/SnapSki', newFiles().length === 1, newFiles().join(', '))
+  check(`Save wrote a PNG to Downloads/SnapSki/${DAY}`, newFiles().length === 1, newFiles().join(', '))
+  check('Save names the day folder', (t?.status ?? '').includes(`SnapSki/${DAY}`), t?.status)
 
   // --- 3. Annotate hands the capture to the editor -------------------------
   await captureVia(page, 'visible')
@@ -227,7 +232,7 @@ try {
   check('toast reopens for the autosaved shot', t?.open === true, JSON.stringify(t))
   check('autosave is reflected in the toast', /saved to disk/.test(t?.status ?? ''), t?.status)
   check('autosave hides the Save button', t?.save === false)
-  check('autosave wrote a second PNG', newFiles().length === 2, newFiles().join(', '))
+  check('autosave wrote a second PNG into the day folder', newFiles().length === 2, newFiles().join(', '))
 
   // Remove only the files this run created.
   for (const f of newFiles()) rmSync(join(DOWNLOADS, f), { force: true })

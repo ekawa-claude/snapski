@@ -2,19 +2,12 @@ import { useEffect, useState } from 'react'
 import { ImageOff, Link2, FolderOpen, Trash2, X, Check } from 'lucide-react'
 import { EditorView } from './components/editor/EditorView'
 import type { CaptureResult } from './types'
+import { shotPath } from '../shared/shot-path'
 
 /** Convert a data URL into a Blob so it can go on the clipboard / to downloads. */
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl)
   return res.blob()
-}
-
-function stamp(): string {
-  const d = new Date()
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(
-    d.getMinutes()
-  )}-${p(d.getSeconds())}`
 }
 
 interface SavedFile {
@@ -50,7 +43,7 @@ export function EditorApp(): JSX.Element {
   /**
    * Export the finished annotation. Either action is independent: copy the PNG to
    * the clipboard (best-effort — the editor tab is focused, so the async Clipboard
-   * API is allowed) and/or save it via the downloads API into a SnapSki/ subfolder.
+   * API is allowed) and/or save it via the downloads API into today's folder.
    */
   const exportImage = async (
     dataUrl: string,
@@ -68,7 +61,7 @@ export function EditorApp(): JSX.Element {
     if (opts.download) {
       const id = await chrome.downloads.download({
         url: dataUrl,
-        filename: `SnapSki/snapski_${stamp()}.png`,
+        filename: shotPath(),
         saveAs: false
       })
       const filename = await waitForDownload(id)
