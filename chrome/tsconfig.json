@@ -18,8 +18,19 @@
     "types": ["chrome", "node", "vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/editor/*"]
+      "@/*": ["src/editor/*"],
+      "@editor/*": ["../shared/editor/*"],
+      "react": ["node_modules/@types/react"],
+      "react/*": ["node_modules/@types/react/*"],
+      "react-dom": ["node_modules/@types/react-dom"],
+      "react-dom/*": ["node_modules/@types/react-dom/*"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime"],
+      "fabric": ["node_modules/fabric"],
+      "lucide-react": ["node_modules/lucide-react"],
+      "clsx": ["node_modules/clsx"],
+      "tailwind-merge": ["node_modules/tailwind-merge"],
+      "class-variance-authority": ["node_modules/class-variance-authority"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "../shared/editor/**/*"]
 }

@@ -31,6 +31,7 @@ function copyStatic() {
   return {
     name: 'copy-static',
     closeBundle() {
+      mkdirSync(resolve(__dirname, 'dist'), { recursive: true })
       copyFileSync(resolve(__dirname, 'manifest.json'), resolve(__dirname, 'dist/manifest.json'))
       cpSync(resolve(__dirname, 'icons'), resolve(__dirname, 'dist/icons'), {
         recursive: true,
@@ -44,7 +45,20 @@ export default defineConfig({
   plugins: [react(), copyStatic(), saveShots()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src/editor')
+      '@': resolve(__dirname, 'src/editor'),
+      '@editor': resolve(__dirname, '../shared/editor'),
+      'lucide-react': resolve(__dirname, 'node_modules/lucide-react'),
+      fabric: resolve(__dirname, 'node_modules/fabric'),
+      clsx: resolve(__dirname, 'node_modules/clsx'),
+      'tailwind-merge': resolve(__dirname, 'node_modules/tailwind-merge'),
+      'class-variance-authority': resolve(__dirname, 'node_modules/class-variance-authority'),
+      react: resolve(__dirname, 'node_modules/react'),
+      'react-dom': resolve(__dirname, 'node_modules/react-dom')
+    }
+  },
+  server: {
+    fs: {
+      allow: ['..']
     }
   },
   build: {

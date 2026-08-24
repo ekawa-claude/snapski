@@ -13,7 +13,7 @@ import {
   Gradient,
   Path
 } from 'fabric'
-import type { CaptureResult } from '../../types'
+import type { CaptureResult } from './types'
 import { blurRegion } from './pixelate'
 import { makeArrow, Arrow } from './arrow'
 import { Callout } from './Callout'

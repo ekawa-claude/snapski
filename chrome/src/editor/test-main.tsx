@@ -2,7 +2,7 @@
 // Mounts EditorView with a generated sample image so renderer-only behaviour
 // (e.g. arrow head resize) can be driven in a browser preview.
 import ReactDOM from 'react-dom/client'
-import { EditorView } from './components/editor/EditorView'
+import { EditorView } from '@editor/EditorView'
 import './index.css'
 
 const cv = document.createElement('canvas')

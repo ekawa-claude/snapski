@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ImageOff, Link2, FolderOpen, Trash2, X, Check } from 'lucide-react'
-import { EditorView } from './components/editor/EditorView'
+import { EditorView } from '@editor/EditorView'
 import { ShotStrip } from './ShotStrip'
 import type { CaptureResult } from './types'
 import { shotPath } from '../shared/shot-path'

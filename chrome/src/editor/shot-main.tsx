@@ -9,9 +9,9 @@ import {
   IText,
   FabricImage
 } from 'fabric'
-import { EditorView } from './components/editor/EditorView'
-import { makeArrow } from './components/editor/arrow'
-import { Callout } from './components/editor/Callout'
+import { EditorView } from '@editor/EditorView'
+import { makeArrow } from '@editor/arrow'
+import { Callout } from '@editor/Callout'
 import './index.css'
 
 const RED = '#f43f5e'
