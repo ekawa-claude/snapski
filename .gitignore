@@ -21,3 +21,4 @@ npm-debug.log*
 # OS junk
 .DS_Store
 Thumbs.db
+e2e-toast.png

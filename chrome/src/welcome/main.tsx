@@ -25,12 +25,12 @@ const steps = [
   {
     eyebrow: 'Capture',
     title: 'Grab exactly what matters',
-    text: 'Use the floating button, toolbar popup, or a keyboard shortcut. Region, visible area, and full-page capture all open directly in the editor.'
+    text: 'Use the floating button, toolbar popup, or a keyboard shortcut. Region, visible area, and full-page capture all land on your clipboard right away — paste them straight into a chat.'
   },
   {
     eyebrow: 'Annotate',
     title: 'Make the point instantly',
-    text: 'Add arrows, numbered steps, text, blur, highlights, and spotlight. Everything stays editable until you copy or download the result.'
+    text: 'Every shot offers Annotate and Save on the way past. Open the editor for arrows, numbered steps, text, blur, highlights and spotlight — everything stays editable until you copy or download the result.'
   },
   {
     eyebrow: 'Make it yours',

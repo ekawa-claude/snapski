@@ -2,9 +2,13 @@
 export {} // module scope (avoids global name clashes with other scripts)
 // SnapSki for Chrome — service worker.
 // Responsibilities: capture the active tab (visible area or full scroll-stitched
-// page), then open the annotate editor with the resulting PNG.
+// page), then DELIVER the result: the shot goes to the in-page toast, which
+// copies it to the clipboard and offers Annotate / Save. Pages that can't host a
+// content script (chrome://, the Web Store) fall back to opening the editor tab.
 
 const CAPTURE_DELAY_MS = 300 // captureVisibleTab is rate-limited (~2/sec)
+const AUTOSAVE_KEY = 'snapski_autosave' // write the PNG to disk on every capture
+const CAP_TTL_MS = 30 * 60 * 1000 // abandoned captures are swept after this
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -136,8 +140,60 @@ interface CaptureOpts {
   dpr?: number
 }
 
-/** Run a capture and open the editor tab with the result. */
-async function captureAndOpen(
+function stamp(): string {
+  const d = new Date()
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(
+    d.getMinutes()
+  )}-${p(d.getSeconds())}`
+}
+
+/** Write a PNG data URL into Downloads/SnapSki/. Returns the download id. */
+function saveShot(dataUrl: string): Promise<number> {
+  return chrome.downloads.download({
+    url: dataUrl,
+    filename: `SnapSki/snapski_${stamp()}.png`,
+    saveAs: false
+  })
+}
+
+function openEditor(id: string): Promise<chrome.tabs.Tab> {
+  return chrome.tabs.create({ url: chrome.runtime.getURL(`editor.html?id=${id}`) })
+}
+
+/**
+ * Hand a finished capture to the user.
+ *
+ * The fast path is the in-page toast: it copies the PNG to the clipboard and
+ * offers Annotate / Save, so a shot you only want to paste never costs an editor
+ * tab. The clipboard write has to happen there — a service worker has no DOM, and
+ * an offscreen document is never focused, which the async Clipboard API rejects
+ * (execCommand does "work" from one, but only puts HTML markup on the clipboard,
+ * not a bitmap). When the tab can't host a content script (chrome://, the Web
+ * Store, a page loaded before the extension), we open the editor as before.
+ */
+async function deliver(tabId: number | undefined, dataUrl: string): Promise<void> {
+  const id = crypto.randomUUID()
+  await chrome.storage.local.set({ [`cap_${id}`]: { dataUrl, ts: Date.now() } })
+
+  const store = await chrome.storage.sync.get({ [AUTOSAVE_KEY]: false })
+  const autosaved = store[AUTOSAVE_KEY] === true
+  if (autosaved) await saveShot(dataUrl)
+
+  if (tabId != null) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'snapski-shot', id, dataUrl, autosaved })
+      return
+    } catch (e) {
+      // No content script in that tab — fall through to the editor tab.
+      console.warn('SNAPSKI toast delivery failed:', String((e as Error)?.message ?? e))
+    }
+  }
+  await openEditor(id)
+}
+
+/** Run a capture and deliver the result. */
+async function captureAndDeliver(
   mode: 'visible' | 'full' | 'region',
   opts: CaptureOpts = {}
 ): Promise<void> {
@@ -158,28 +214,63 @@ async function captureAndOpen(
     showUi(tab.id)
   }
 
-  const id = crypto.randomUUID()
-  await chrome.storage.local.set({ [`cap_${id}`]: { dataUrl } })
-  await chrome.tabs.create({ url: chrome.runtime.getURL(`editor.html?id=${id}`) })
+  await deliver(tab.id, dataUrl)
 }
+
+/** Read back a stored capture (the toast keeps its id, not the pixels). */
+async function readCap(id: string): Promise<string | null> {
+  const key = `cap_${id}`
+  const store = await chrome.storage.local.get(key)
+  return (store[key] as { dataUrl?: string } | undefined)?.dataUrl ?? null
+}
+
+/** Drop captures nobody acted on, so dismissed toasts don't pile up on disk. */
+async function sweepCaptures(): Promise<void> {
+  const all = await chrome.storage.local.get(null)
+  const stale = Object.entries(all)
+    .filter(([k, v]) => {
+      if (!k.startsWith('cap_')) return false
+      const ts = (v as { ts?: number })?.ts
+      return typeof ts !== 'number' || Date.now() - ts > CAP_TTL_MS
+    })
+    .map(([k]) => k)
+  if (stale.length) await chrome.storage.local.remove(stale)
+}
+void sweepCaptures()
 
 // --- triggers -------------------------------------------------------------
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'capture') {
-    captureAndOpen(msg.mode, { rect: msg.rect, dpr: msg.dpr })
+    captureAndDeliver(msg.mode, { rect: msg.rect, dpr: msg.dpr })
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message ?? e) }))
     return true // keep the message channel open for the async response
   }
   if (msg?.type === 'screen-frame') {
-    // The content script grabbed a getDisplayMedia frame in-page; stash it and
-    // open the editor (so the user's own tab stays where it was).
-    const id = crypto.randomUUID()
-    void chrome.storage.local
-      .set({ [`cap_${id}`]: { dataUrl: msg.dataUrl } })
-      .then(() => chrome.tabs.create({ url: chrome.runtime.getURL(`editor.html?id=${id}`) }))
+    // The content script grabbed a getDisplayMedia frame in-page — deliver it
+    // back to that same tab, so the user's own tab stays where it was.
+    void deliver(sender.tab?.id, msg.dataUrl)
     sendResponse({ ok: true })
+    return false
+  }
+  if (msg?.type === 'open-editor') {
+    void openEditor(msg.id)
+    sendResponse({ ok: true })
+    return false
+  }
+  if (msg?.type === 'save-shot') {
+    void readCap(msg.id)
+      .then(async (dataUrl) => {
+        if (!dataUrl) return sendResponse({ ok: false, error: 'That capture has expired' })
+        await saveShot(dataUrl)
+        sendResponse({ ok: true })
+      })
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message ?? e) }))
+    return true
+  }
+  if (msg?.type === 'discard-shot') {
+    void chrome.storage.local.remove(`cap_${msg.id}`)
     return false
   }
   return false
@@ -197,7 +288,7 @@ async function startRegionOnActiveTab(): Promise<void> {
 }
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command === 'capture-visible') void captureAndOpen('visible')
+  if (command === 'capture-visible') void captureAndDeliver('visible')
   else if (command === 'capture-region') void startRegionOnActiveTab()
 })
 
@@ -229,5 +320,5 @@ chrome.runtime.onInstalled.addListener((details) => {
 })
 
 chrome.contextMenus.onClicked.addListener((info) => {
-  if (info.menuItemId === 'snapski-capture') void captureAndOpen('visible')
+  if (info.menuItemId === 'snapski-capture') void captureAndDeliver('visible')
 })

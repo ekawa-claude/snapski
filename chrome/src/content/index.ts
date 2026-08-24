@@ -1,10 +1,13 @@
 /// <reference types="chrome" />
 export {} // module scope (avoids global name clashes with other scripts)
-// SnapSki for Chrome — in-page floating button + region selector.
+// SnapSki for Chrome — in-page floating button, region selector and shot toast.
 // Injected on every page. Renders a draggable FAB inside a shadow root (so page
 // CSS can't touch it); tapping it opens a small menu (region / visible / full).
 // Region selection dims the page and lets the user drag a rectangle, then hands
 // the viewport-relative rect to the background worker to crop.
+// After any capture the worker sends the PNG back here: we copy it to the
+// clipboard (only a focused document may, which rules out doing it in the worker
+// or an offscreen page) and show a toast offering Annotate / Save.
 
 const POS_KEY = 'snapski_fab'
 const ICON_KEY = 'snapski_icon' // 'minimal' | 'monster'
@@ -89,7 +92,166 @@ const ICON_CAM = svg('<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16
 const ICON_FULL = svg('<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>')
 const ICON_SCREEN = svg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="m9 9 2 2 4-4"/>')
 const ICON_MASK = svg('<path d="M12 3c4.5 0 8 3 8 7 0 3-1.5 4.5-1.5 6.5S17 21 15 19.5 13 21 12 21s-1-3-3-1.5S5.5 18.5 5.5 16.5 4 13 4 10c0-4 3.5-7 8-7Z"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/>')
+const ICON_PENCIL = svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>')
+const ICON_SAVE = svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>')
+const ICON_CLOSE = svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>')
+const ICON_COPY = svg('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>')
 const ICON_HIDE = svg('<path d="M10.7 5.1A9.8 9.8 0 0 1 12 5c5 0 9 5 9 7a11.8 11.8 0 0 1-1.7 2.7"/><path d="M6.6 6.6C4.4 8 3 10.3 3 12c0 2 4 7 9 7 1.4 0 2.7-.4 3.8-1"/><path d="m3 3 18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>')
+
+const TOAST_MS = 5000
+
+interface Shot {
+  id: string
+  dataUrl: string
+  autosaved: boolean
+}
+
+/**
+ * The post-capture toast: a shot lands on the clipboard immediately and the
+ * editor becomes an offer instead of a gate. Lives in its own shadow host so
+ * hiding the FAB — globally, or for the duration of a capture — never hides it.
+ */
+function initToast(): (shot: Shot) => void {
+  const host = document.createElement('div')
+  host.id = 'snapski-toast-host'
+  host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;'
+  const root = host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = toastCss()
+  root.appendChild(style)
+  document.documentElement.appendChild(host)
+
+  const card = document.createElement('div')
+  card.className = 'toast'
+  card.innerHTML = `
+    <img class="thumb" alt="">
+    <div class="col">
+      <div class="status" data-status></div>
+      <div class="acts">
+        <button class="act primary" data-act="annotate">${ICON_PENCIL}<span>Annotate</span></button>
+        <button class="act" data-act="save">${ICON_SAVE}<span>Save</span></button>
+        <button class="act" data-act="copy">${ICON_COPY}<span>Copy</span></button>
+      </div>
+    </div>
+    <button class="x" data-act="close" title="Dismiss">${ICON_CLOSE}</button>`
+  root.appendChild(card)
+  isolate(card)
+
+  const thumbEl = card.querySelector<HTMLImageElement>('.thumb')!
+  const statusEl = card.querySelector<HTMLElement>('[data-status]')!
+  const saveBtn = card.querySelector<HTMLButtonElement>('[data-act="save"]')!
+  const copyBtn = card.querySelector<HTMLButtonElement>('[data-act="copy"]')!
+
+  let current: Shot | null = null
+  /** Set once the shot has somewhere else to live, so dismissing won't drop it. */
+  let consumed = false
+  let timer = 0
+
+  const setStatus = (text: string, bad = false): void => {
+    statusEl.textContent = text
+    statusEl.classList.toggle('bad', bad)
+  }
+  const arm = (): void => {
+    window.clearTimeout(timer)
+    timer = window.setTimeout(() => hide(true), TOAST_MS)
+  }
+  const hide = (discard: boolean): void => {
+    window.clearTimeout(timer)
+    card.classList.remove('open')
+    if (current && discard && !consumed) {
+      chrome.runtime.sendMessage({ type: 'discard-shot', id: current.id }).catch(() => {})
+    }
+    current = null
+  }
+
+  /** Put the PNG on the clipboard. Needs a focused document — hence: in the page. */
+  const copy = async (dataUrl: string): Promise<boolean> => {
+    try {
+      const blob = await (await fetch(dataUrl)).blob()
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      return true
+    } catch {
+      // Focus was elsewhere (devtools, another window) — the Copy button retries,
+      // and clicking it is itself the focus + user gesture that makes it work.
+      return false
+    }
+  }
+
+  card.addEventListener('pointerenter', () => window.clearTimeout(timer))
+  card.addEventListener('pointerleave', () => {
+    if (current && copyBtn.hidden) arm()
+  })
+
+  card.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const shot = current
+      if (!shot) return
+      const act = btn.dataset.act
+      if (act === 'close') return hide(true)
+      if (act === 'annotate') {
+        consumed = true // the editor tab owns the capture now
+        chrome.runtime.sendMessage({ type: 'open-editor', id: shot.id }).catch(() => {})
+        return hide(false)
+      }
+      if (act === 'copy') {
+        void copy(shot.dataUrl).then((ok) => {
+          if (current?.id !== shot.id) return
+          setStatus(ok ? 'Copied — paste anywhere' : "Still couldn't copy", !ok)
+          if (ok) {
+            copyBtn.hidden = true
+            arm()
+          }
+        })
+        return
+      }
+      if (act === 'save') {
+        btn.disabled = true
+        window.clearTimeout(timer)
+        chrome.runtime
+          .sendMessage({ type: 'save-shot', id: shot.id })
+          .then((res) => {
+            if (current?.id !== shot.id) return
+            btn.disabled = false
+            if (res?.ok) {
+              consumed = true
+              saveBtn.hidden = true
+              setStatus('Saved to Downloads/SnapSki')
+              arm()
+            } else {
+              setStatus(res?.error ?? "Couldn't save", true)
+            }
+          })
+          .catch(() => {
+            btn.disabled = false
+            setStatus("Couldn't save", true)
+          })
+      }
+    })
+  })
+
+  return (shot: Shot) => {
+    current = shot
+    consumed = false
+    thumbEl.src = shot.dataUrl
+    saveBtn.hidden = shot.autosaved
+    saveBtn.disabled = false
+    copyBtn.hidden = true
+    setStatus('Copying…')
+    card.classList.add('open')
+    arm()
+    void copy(shot.dataUrl).then((ok) => {
+      if (current?.id !== shot.id) return
+      if (ok) {
+        setStatus(shot.autosaved ? 'Copied · saved to disk' : 'Copied — paste anywhere')
+      } else {
+        // Leave it up: the user has to click Copy, so don't time out under them.
+        setStatus("Couldn't copy — click Copy", true)
+        copyBtn.hidden = false
+        window.clearTimeout(timer)
+      }
+    })
+  }
+}
 
 function init(): void {
   const host = document.createElement('div')
@@ -118,6 +280,8 @@ function init(): void {
   const style = document.createElement('style')
   style.textContent = css()
   root.appendChild(style)
+
+  const showToast = initToast()
 
   // ---- FAB ----
   const fab = document.createElement('button')
@@ -408,6 +572,11 @@ function init(): void {
       applyVisibility()
       return false
     }
+    if (msg?.type === 'snapski-shot') {
+      showToast({ id: msg.id, dataUrl: msg.dataUrl, autosaved: msg.autosaved === true })
+      sendResponse({ ok: true })
+      return false
+    }
     if (msg?.type === 'snapski-start-region') {
       closeMenu()
       startRegion()
@@ -458,6 +627,41 @@ function css(): string {
   .item.toggle:hover{background:rgba(255,255,255,.06);color:#fff;}
   .item.subdued{color:#bdbdc4;}
   .item.subdued:hover{background:rgba(255,255,255,.06);color:#fff;}`
+}
+
+function toastCss(): string {
+  return `
+  .toast{position:fixed;top:16px;left:50%;display:flex;align-items:center;gap:12px;
+    max-width:min(460px,calc(100vw - 32px));padding:10px 10px 10px 12px;
+    background:rgba(20,20,26,.96);backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.08);border-radius:14px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);
+    font-family:'Segoe UI',system-ui,sans-serif;
+    opacity:0;pointer-events:none;transform:translateX(-50%) translateY(-10px);
+    transition:opacity .16s ease-out,transform .16s ease-out;}
+  .toast.open{opacity:1;pointer-events:auto;transform:translateX(-50%);}
+  .toast .thumb{width:76px;height:48px;flex:none;object-fit:cover;border-radius:8px;
+    background:#111;border:1px solid rgba(255,255,255,.1);}
+  .toast .col{display:flex;flex-direction:column;gap:7px;min-width:0;}
+  .toast .status{color:#e7e7ea;font-size:12.5px;font-weight:500;line-height:1.2;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .toast .status.bad{color:#ff9a8b;}
+  .toast .acts{display:flex;gap:6px;}
+  .act{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:none;
+    border-radius:8px;background:rgba(255,255,255,.08);color:#e7e7ea;
+    font:600 12px 'Segoe UI',system-ui,sans-serif;cursor:pointer;white-space:nowrap;
+    transition:background .12s,color .12s;}
+  .act:hover{background:rgba(255,255,255,.16);color:#fff;}
+  .act.primary{background:${PRIMARY};color:#fff;}
+  .act.primary:hover{background:#5145e0;}
+  .act:disabled{opacity:.55;cursor:default;}
+  .act[hidden]{display:none;}
+  .act svg{width:14px;height:14px;flex:none;}
+  .toast .x{margin-left:auto;align-self:flex-start;display:flex;padding:4px;border:none;
+    background:transparent;color:#8b8b96;border-radius:7px;cursor:pointer;
+    transition:background .12s,color .12s;}
+  .toast .x:hover{background:rgba(255,255,255,.1);color:#fff;}
+  .toast .x svg{width:15px;height:15px;}`
 }
 
 function overlayCss(): string {

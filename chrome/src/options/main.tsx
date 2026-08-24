@@ -1,11 +1,53 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Check, CircleHelp, Eye, EyeOff } from 'lucide-react'
+import { Check, CircleHelp, Eye, EyeOff, HardDriveDownload } from 'lucide-react'
 import '../editor/index.css'
 
 const ICON_KEY = 'snapski_icon'
 const FAB_ENABLED_KEY = 'snapski_fab_enabled'
+const AUTOSAVE_KEY = 'snapski_autosave'
 type Style = 'minimal' | 'monster'
+
+/** A labelled switch row — the shape both of this page's settings use. */
+function ToggleRow({
+  on,
+  icon,
+  title,
+  hint,
+  onToggle
+}: {
+  on: boolean
+  icon: JSX.Element
+  title: string
+  hint: string
+  onToggle: () => void
+}): JSX.Element {
+  return (
+    <button
+      onClick={onToggle}
+      aria-pressed={on}
+      className="flex w-full items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-accent"
+    >
+      <span
+        className={`flex h-10 w-10 items-center justify-center rounded-xl ${on ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'}`}
+      >
+        {icon}
+      </span>
+      <span className="flex-1">
+        <span className="block text-sm font-semibold">{title}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <span
+        className={`relative h-6 w-11 rounded-full transition-colors ${on ? 'bg-primary' : 'bg-secondary'}`}
+        aria-hidden="true"
+      >
+        <span
+          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`}
+        />
+      </span>
+    </button>
+  )
+}
 
 function OptionCard({
   active,
@@ -46,15 +88,19 @@ function OptionCard({
 function Options(): JSX.Element {
   const [style, setStyle] = useState<Style>('minimal')
   const [fabEnabled, setFabEnabled] = useState(true)
+  const [autosave, setAutosave] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get(ICON_KEY).then((s) => {
       if (s[ICON_KEY] === 'monster' || s[ICON_KEY] === 'minimal') setStyle(s[ICON_KEY])
     })
-    chrome.storage.sync.get({ [FAB_ENABLED_KEY]: true }).then((s) => {
-      setFabEnabled(s[FAB_ENABLED_KEY] !== false)
-    })
+    chrome.storage.sync
+      .get({ [FAB_ENABLED_KEY]: true, [AUTOSAVE_KEY]: false })
+      .then((s) => {
+        setFabEnabled(s[FAB_ENABLED_KEY] !== false)
+        setAutosave(s[AUTOSAVE_KEY] === true)
+      })
   }, [])
 
   const markSaved = (): void => {
@@ -75,6 +121,13 @@ function Options(): JSX.Element {
     markSaved()
   }
 
+  const toggleAutosave = (): void => {
+    const next = !autosave
+    setAutosave(next)
+    void chrome.storage.sync.set({ [AUTOSAVE_KEY]: next })
+    markSaved()
+  }
+
   const url = (p: string): string => chrome.runtime.getURL(p)
 
   return (
@@ -88,27 +141,22 @@ function Options(): JSX.Element {
         Customize how SnapSki appears while you browse.
       </p>
 
-      <button
-        onClick={toggleFab}
-        aria-pressed={fabEnabled}
-        className="mb-6 flex w-full items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-accent"
-      >
-        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${fabEnabled ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'}`}>
-          {fabEnabled ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
-        </span>
-        <span className="flex-1">
-          <span className="block text-sm font-semibold">Floating button on websites</span>
-          <span className="mt-0.5 block text-xs text-muted-foreground">
-            Capture controls remain available from the toolbar and keyboard shortcuts when hidden.
-          </span>
-        </span>
-        <span
-          className={`relative h-6 w-11 rounded-full transition-colors ${fabEnabled ? 'bg-primary' : 'bg-secondary'}`}
-          aria-hidden="true"
-        >
-          <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${fabEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-        </span>
-      </button>
+      <div className="mb-6 flex flex-col gap-3">
+        <ToggleRow
+          on={fabEnabled}
+          icon={fabEnabled ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+          title="Floating button on websites"
+          hint="Capture controls remain available from the toolbar and keyboard shortcuts when hidden."
+          onToggle={toggleFab}
+        />
+        <ToggleRow
+          on={autosave}
+          icon={<HardDriveDownload className="h-5 w-5" />}
+          title="Save every capture to disk"
+          hint="Off by default: shots go straight to the clipboard, and Save on the toast writes the ones you want to keep. Turn this on and every capture also lands in Downloads/SnapSki — including ones you then annotate, which produces a second file."
+          onToggle={toggleAutosave}
+        />
+      </div>
 
       <h2 className="mb-3 text-sm font-semibold">Icon style</h2>
 
