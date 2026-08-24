@@ -61,21 +61,25 @@ export function SettingsPanel({ settings, onClose, onChange }: Props): JSX.Eleme
     }
   }
 
+  // p-6 + max-h-full keep the card inside the window. A centred flex child that
+  // outgrows its container overflows in BOTH directions, and the part above the
+  // top edge is unreachable — no scrollbar reaches it. That hid the header and
+  // the output-folder field on short windows.
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center">
+    <div className="absolute inset-0 z-50 flex items-center justify-center p-6">
       <div
         className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in"
         onClick={onClose}
       />
-      <div className="relative z-10 w-[440px] overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl shadow-black/60 animate-in fade-in zoom-in-95">
-        <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
+      <div className="relative z-10 flex max-h-full w-[440px] flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl shadow-black/60 animate-in fade-in zoom-in-95">
+        <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-5 py-4">
           <h2 className="text-sm font-semibold">Settings</h2>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
           {/* Output folder */}
           <Field label="Output folder" hint="Screenshots are saved here as PNG.">
             <div className="flex gap-2">
@@ -157,7 +161,7 @@ export function SettingsPanel({ settings, onClose, onChange }: Props): JSX.Eleme
           </div>
         </div>
 
-        <div className="flex justify-end border-t border-border/60 px-5 py-3.5">
+        <div className="flex shrink-0 justify-end border-t border-border/60 px-5 py-3.5">
           <Button onClick={onClose}>Done</Button>
         </div>
       </div>

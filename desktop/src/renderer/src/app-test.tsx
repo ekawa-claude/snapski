@@ -39,22 +39,36 @@ w.__fireCapture = (r: CaptureResult) => captureCb?.(r)
 w.__fireRecState = (active: boolean) => recStateCb?.({ active })
 w.__fireRecDone = (ok: boolean) => recDoneCb?.({ path: 'C:/test/Rec.mp4', ok })
 
+// Keep this in step with AppSettings — the panel renders every field, and a
+// stale shape here quietly shrinks the dialog under test.
+const settings = {
+  outputFolder: 'C:/Users/User/Pictures/SnapSki',
+  hotkeys: { capture: 'PrintScreen', fullscreen: 'Alt+PrintScreen' },
+  copyToClipboard: true,
+  saveToFolder: true,
+  captureMode: 'screenshot',
+  autoLaunch: true
+}
+
+const syncStatus = {
+  paired: true,
+  enabled: true,
+  running: false,
+  lastSyncAt: Date.now() - 60_000,
+  queued: 0,
+  serverUsed: 55.1 * 1024 * 1024,
+  serverQuota: 2 * 1024 * 1024 * 1024,
+  storageFull: false,
+  lastError: null,
+  hubUrl: 'https://chat.wishly.wtf/snapski-hub'
+}
+
 const mock = {
-  getSettings: async () => ({
-    outputFolder: 'C:/Users/User/Pictures/SnapSki',
-    hotkeys: { capture: 'PrintScreen' },
-    copyToClipboard: true,
-    saveToFolder: true,
-    captureMode: 'screenshot'
-  }),
-  setSettings: async (p: unknown) => ({
-    outputFolder: 'C:/Users/User/Pictures/SnapSki',
-    hotkeys: { capture: 'PrintScreen' },
-    copyToClipboard: true,
-    saveToFolder: true,
-    captureMode: 'screenshot',
-    ...(p as object)
-  }),
+  getSettings: async () => ({ ...settings }),
+  setSettings: async (p: unknown) => {
+    Object.assign(settings, p as object)
+    return { ...settings }
+  },
   chooseFolder: async () => null,
   openFolder: async () => {},
   triggerCapture: async () => {},
@@ -120,7 +134,25 @@ const mock = {
     return () => {
       captureCb = null
     }
-  }
+  },
+
+  // Auto-update (added to the app in July; the harness never caught up, which
+  // made it throw on mount and render nothing at all).
+  onUpdateStatus: () => () => {},
+  installUpdate: async () => {},
+
+  // Sync
+  syncStatus: async () => ({ ...syncStatus }),
+  onSyncStatus: () => () => {},
+  syncRequest: async () => {},
+  syncNow: async () => {},
+  syncSetEnabled: async (v: boolean) => {
+    syncStatus.enabled = v
+  },
+  syncCreate: async () => true,
+  syncJoin: async () => true,
+  syncUnpair: async () => {},
+  syncPairPayload: async () => ({ code: 'TEST-CODE', qr: '' })
 }
 ;(window as unknown as { snap: unknown }).snap = mock
 
