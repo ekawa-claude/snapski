@@ -82,6 +82,8 @@ function sha256Hex(s: string): string {
 export class SyncManager {
   private state: Persisted
   private running = false
+  /** A sync was asked for while one ran — run once more when it ends. */
+  private rerun = false
   private storageFull = false
   private lastError: string | null = null
   private timer: NodeJS.Timeout | null = null
@@ -295,8 +297,16 @@ export class SyncManager {
   // --- the cycle ---------------------------------------------------------
 
   async sync(): Promise<void> {
-    if (!this.state.enabled || !this.isPaired() || this.running) return
+    if (!this.state.enabled || !this.isPaired()) return
+    // Coalesce, don't drop: an SSE "changed" that lands mid-cycle may be about
+    // data this cycle's pull already passed; skipping it left the change
+    // waiting for the 2-minute safety poll.
+    if (this.running) {
+      this.rerun = true
+      return
+    }
     this.running = true
+    this.rerun = false
     this.lastError = null
     this.emit()
     let libraryTouched = false
@@ -314,6 +324,10 @@ export class SyncManager {
       this.running = false
       this.emit()
       if (libraryTouched) this.onLibraryChanged()
+      if (this.rerun) {
+        this.rerun = false
+        void this.sync()
+      }
     }
   }
 
@@ -392,6 +406,8 @@ export class SyncManager {
     if (this.state.tombstones.includes(id) || this.nameForId(id)) return false
     const meta = c.meta
     if (!meta) return false
+    // The id becomes part of a file name — never let it carry a path.
+    if (!/^[\w-]{1,64}$/.test(id)) return false
     const name = `Sync-${id}.png`
     // Shots arriving from another device stay in the library root rather than
     // today's folder: they were taken elsewhere, possibly days ago, and keeping
@@ -401,8 +417,12 @@ export class SyncManager {
     try {
       const buf = await this.downloadFile(id)
       await writeFile(full, buf)
-    } catch {
-      return false // deleted server-side before we fetched — skip
+    } catch (err) {
+      // Deleted server-side before we fetched — skip. Anything else (network
+      // blip, 5xx, disk) must fail the cycle: the cursor would otherwise move
+      // past this shot and it would never arrive on this machine.
+      if ((err as { status?: number }).status === 404) return false
+      throw err
     }
     this.state.map[name] = {
       id,
@@ -428,7 +448,7 @@ export class SyncManager {
 
   private async applyRemoteDelete(id: string): Promise<boolean> {
     const name = this.nameForId(id)
-    this.state.tombstones.push(id)
+    if (!this.state.tombstones.includes(id)) this.state.tombstones.push(id)
     if (!name) {
       this.persist()
       return false

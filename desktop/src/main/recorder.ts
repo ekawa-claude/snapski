@@ -99,11 +99,19 @@ export function startRecording(opts: StartOpts, onExit: (file: string, ok: boole
 
 /** Gracefully stop recording so the mp4 is finalized (moov atom written). */
 export function stopRecording(): void {
-  if (!proc) return
+  const p = proc
+  if (!p) return
   try {
-    proc.stdin?.write('q')
-    proc.stdin?.end()
+    p.stdin?.write('q')
+    p.stdin?.end()
   } catch {
-    proc.kill()
+    p.kill()
+    return
   }
+  // ffmpeg normally finishes within a second. If it hangs (gdigrab stuck on a
+  // mode switch), the app would think it's recording forever and the hotkey
+  // would only ever try to stop it again — kill it so the user gets unstuck.
+  setTimeout(() => {
+    if (proc === p) p.kill()
+  }, 8000)
 }

@@ -56,6 +56,8 @@ export interface CaptureResult {
   dataUrl: string
   /** Absolute path the PNG was saved to, if saving is enabled. */
   savedPath: string | null
+  /** Whether the image was put on the clipboard (per settings / editor choice). */
+  copied?: boolean
   width: number
   height: number
 }

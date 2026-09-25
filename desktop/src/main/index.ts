@@ -49,6 +49,16 @@ const DEFAULT_HUB = 'https://chat.wishly.wtf/snapski-hub'
 /** True when launched by the OS auto-start entry — boot straight into the tray. */
 const startedHidden = process.argv.includes('--hidden')
 
+// One SnapSki at a time. A second copy (autostart + a click on the shortcut)
+// couldn't register PrintScreen, added a second tray icon and ran its own sync
+// against the same state file. Launching again now just brings the window up.
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0)
+}
+app.on('second-instance', (_e, argv) => {
+  if (!argv.includes('--hidden')) showMainWindow()
+})
+
 /** Branding icon (monster mascot) bundled in build/. */
 function brandIcon(name: 'icon.png' | 'tray.png'): Electron.NativeImage {
   // Packaged: build/ is copied next to the app via electron-builder buildResources.
@@ -167,7 +177,7 @@ const trayIcon = (): Electron.NativeImage => {
   return nativeImage.createFromBuffer(Buffer.from(png, 'base64'))
 }
 
-function createMainWindow(): void {
+function createMainWindow(show = !startedHidden): void {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
@@ -188,7 +198,12 @@ function createMainWindow(): void {
   // When auto-started at login we boot silently into the tray; the user opens
   // the window from the tray. Any later open shows normally.
   mainWindow.on('ready-to-show', () => {
-    if (!startedHidden) mainWindow?.show()
+    if (show) {
+      mainWindow?.show()
+      // Reopened for a capture result: come to the front, not behind the app
+      // that got focus back when the overlay closed.
+      mainWindow?.focus()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -205,6 +220,21 @@ function createMainWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+}
+
+/**
+ * Show the main window, recreating it if the user closed it (X destroys it —
+ * the app lives on in the tray). The renderer lists the gallery on load, so a
+ * fresh window already shows the latest capture.
+ */
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow(true)
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
 }
 
 /** Bounds of the whole virtual desktop in DIP. */
@@ -463,14 +493,26 @@ function timestampName(prefix: string, ext: string): string {
   )}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.${ext}`
 }
 
-/** Timestamp name that doesn't collide with an existing file (multi-file imports). */
+/** Names handed out but maybe not on disk yet (the write is still in flight). */
+const reservedNames = new Set<string>()
+
+/**
+ * Timestamp name that doesn't collide with an existing file or with one another
+ * capture is writing right now. Names have one-second resolution: two
+ * Alt+PrintScreen presses in the same second used to write the same file, and
+ * the second shot silently replaced the first.
+ */
 function uniqueTimestampName(folder: string, prefix: string, ext: string): string {
   const base = timestampName(prefix, ext)
-  if (!existsSync(join(folder, base))) return base
   const stem = base.slice(0, -(ext.length + 1))
-  for (let i = 2; ; i++) {
-    const name = `${stem}_${i}.${ext}`
-    if (!existsSync(join(folder, name))) return name
+  for (let i = 1; ; i++) {
+    const name = i === 1 ? base : `${stem}_${i}.${ext}`
+    const full = join(folder, name)
+    if (reservedNames.has(full) || existsSync(full)) continue
+    reservedNames.add(full)
+    // The file exists well before this; after that existsSync covers it.
+    setTimeout(() => reservedNames.delete(full), 60_000)
+    return name
   }
 }
 
@@ -496,7 +538,8 @@ async function finishCapture(
   if (shouldSave) {
     png = image.toPNG()
     ensureOutputFolder(settings.outputFolder)
-    savedPath = join(dayDir(settings.outputFolder), timestampName('Snap', 'png'))
+    const dir = dayDir(settings.outputFolder)
+    savedPath = join(dir, uniqueTimestampName(dir, 'Snap', 'png'))
     await writeFile(savedPath, png)
   }
 
@@ -511,17 +554,16 @@ async function finishCapture(
   const result: CaptureResult = {
     dataUrl,
     savedPath,
+    copied: shouldCopy,
     width: size.width,
     height: size.height
   }
   if (notify) {
     minimizedForCapture = false // the window comes back with the result below
-    mainWindow?.webContents.send('capture:done', result)
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
-    }
+    // Closed to the tray: there's no window to tell. Used to mean the shot
+    // saved silently and nothing appeared; now a fresh window opens on it.
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('capture:done', result)
+    showMainWindow()
   }
   return result
 }
@@ -690,7 +732,8 @@ function startRecording(kind: CaptureKind, rectDip?: Rect): void {
   const hudRectDip = kind === 'region' ? (rectDip ?? null) : kind === 'window' ? pendingWindowRect : null
   const settings = loadSettings()
   ensureOutputFolder(settings.outputFolder)
-  const outFile = join(dayDir(settings.outputFolder), timestampName('Rec', 'mp4'))
+  const recDir = dayDir(settings.outputFolder)
+  const outFile = join(recDir, uniqueTimestampName(recDir, 'Rec', 'mp4'))
 
   // Get the app out of the shot, then start once the window is actually gone.
   if (mainWindow && !mainWindow.isMinimized()) mainWindow.minimize()
@@ -761,13 +804,7 @@ function updateTray(): void {
     { type: 'separator' },
     {
       label: 'Show SnapSki',
-      click: () => {
-        if (!mainWindow) createMainWindow()
-        else {
-          mainWindow.show()
-          mainWindow.focus()
-        }
-      }
+      click: () => showMainWindow()
     },
     { label: 'Quit', click: () => app.quit() }
   ])
@@ -778,7 +815,7 @@ function updateTray(): void {
 function createTray(): void {
   const icon = brandIcon('tray.png')
   tray = new Tray(icon.isEmpty() ? trayIcon() : icon)
-  tray.on('double-click', () => mainWindow?.show())
+  tray.on('double-click', () => showMainWindow())
   updateTray()
 }
 
@@ -913,7 +950,8 @@ function registerIpc(): void {
   ipcMain.handle('video:export', async (_e, opts: VideoExportOpts) => {
     const settings = loadSettings()
     ensureOutputFolder(settings.outputFolder)
-    const outFile = join(dayDir(settings.outputFolder), timestampName('Clip', 'mp4'))
+    const clipDir = dayDir(settings.outputFolder)
+    const outFile = join(clipDir, uniqueTimestampName(clipDir, 'Clip', 'mp4'))
     return new Promise((resolve) => {
       exportVideo(
         opts,

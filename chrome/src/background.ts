@@ -91,9 +91,15 @@ async function captureFullPage(tab: chrome.tabs.Tab): Promise<string> {
     })
   })) as { result: PageMetrics }[]
 
+  // Chrome won't allocate a canvas taller than ~32k device px (or bigger than
+  // ~268M px). Past that convertToBlob throws and the user got nothing at all;
+  // an endless feed also kept us scrolling forever. Take the top that fits.
+  const maxH = Math.floor(Math.min(32000, 268_000_000 / Math.max(1, m.viewW * m.dpr)) / m.dpr)
+  const totalH = Math.min(m.totalH, maxH)
+
   const shots: { y: number; dataUrl: string }[] = []
   let lastY = -1
-  for (let y = 0; y < m.totalH; y += m.viewH) {
+  for (let y = 0; y < totalH; y += m.viewH) {
     await chrome.scripting.executeScript({
       target: { tabId },
       // behavior:'instant' overrides CSS scroll-behavior:smooth animations.
@@ -124,7 +130,7 @@ async function captureFullPage(tab: chrome.tabs.Tab): Promise<string> {
   const dpr = m.dpr
   const canvas = new OffscreenCanvas(
     Math.round(m.viewW * dpr),
-    Math.round(m.totalH * dpr)
+    Math.round(totalH * dpr)
   )
   const ctx = canvas.getContext('2d')!
   for (const s of shots) {

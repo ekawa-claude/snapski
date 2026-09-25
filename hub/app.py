@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -35,6 +36,17 @@ FILES_DIR = DATA_DIR / "files"
 GROUP_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
 CHANGES_LIMIT = 200
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024  # a single PNG shot; sanity ceiling
+
+# group_id and shot_id become directory / file names under FILES_DIR. Clients
+# send a UUID and 8 hex chars; anything with a path in it ("../..") must never
+# reach the filesystem — /register is unauthenticated.
+_SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _safe_id(value: str, what: str) -> str:
+    if not _SAFE_ID.fullmatch(value):
+        raise HTTPException(400, f"invalid {what}")
+    return value
 
 app = FastAPI(title="SnapSki Hub", version="1.2")
 
@@ -124,7 +136,7 @@ def require_group(authorization: Optional[str] = Header(None)) -> str:
         raise HTTPException(401, "missing bearer token")
     cred = authorization[7:].strip()
     group_id, _, token = cred.partition(":")
-    if not group_id or not token:
+    if not group_id or not token or not _SAFE_ID.fullmatch(group_id):
         raise HTTPException(401, "malformed credential")
     with db() as conn:
         row = conn.execute(
@@ -173,6 +185,7 @@ async def register(request: Request):
     token_hash = (body or {}).get("token_hash", "").strip().lower()
     if not group_id or len(token_hash) != 64:
         raise HTTPException(400, "group_id and 64-hex token_hash required")
+    _safe_id(group_id, "group_id")
     now = int(time.time())
     with db() as conn:
         existing = conn.execute(
@@ -207,6 +220,7 @@ async def upload_shot(
     shot_id = str(m.get("id", "")).strip()
     if not shot_id:
         raise HTTPException(400, "meta.id required")
+    _safe_id(shot_id, "meta.id")
 
     with db() as conn:
         existing = conn.execute(
@@ -276,6 +290,7 @@ async def post_op(request: Request, group_id: str = Depends(require_group)):
     ts = (body or {}).get("ts") or int(time.time() * 1000)
     if kind not in ("favorite", "delete") or not shot_id:
         raise HTTPException(400, "kind in {favorite,delete} and shot_id required")
+    _safe_id(shot_id, "shot_id")
 
     value = None
     if kind == "favorite":
@@ -359,6 +374,7 @@ def changes(since: int = 0, group_id: str = Depends(require_group)):
 
 @app.get("/shots/{shot_id}/file")
 def shot_file(shot_id: str, group_id: str = Depends(require_group)):
+    _safe_id(shot_id, "shot_id")
     safe_id = shot_id.replace("/", "_").replace("\\", "_").replace("..", "_")
     fp = FILES_DIR / group_id / f"{safe_id}.png"
     if not fp.exists():

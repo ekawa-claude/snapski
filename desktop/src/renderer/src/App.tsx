@@ -69,9 +69,12 @@ function App(): JSX.Element {
     return list
   }, [])
 
+  // One timer: an older toast's timeout must not cut a newer toast short.
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const showToast = useCallback((msg: string) => {
     setToast(msg)
-    setTimeout(() => setToast(null), 2800)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2800)
   }, [])
 
   useEffect(() => {
@@ -81,7 +84,11 @@ function App(): JSX.Element {
     const offCapture = window.snap.onCaptureDone(async (r) => {
       setFlash(true)
       setTimeout(() => setFlash(false), 450)
-      showToast(`Copied to clipboard & saved · ${r.width}×${r.height}`)
+      // Say only what actually happened — either half can be off in Settings.
+      const did = [r.copied ? 'Copied to clipboard' : null, r.savedPath ? 'saved' : null]
+        .filter(Boolean)
+        .join(' & ')
+      showToast(`${did ? did.charAt(0).toUpperCase() + did.slice(1) : 'Captured'} · ${r.width}×${r.height}`)
       // a new capture supersedes whatever was being edited
       setEditing(null)
       setEditingVideo(null)
