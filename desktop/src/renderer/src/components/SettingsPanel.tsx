@@ -184,6 +184,8 @@ function SyncSection(): JSX.Element {
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [pair, setPair] = useState<{ code: string; qr: string } | null>(null)
   const [joinCode, setJoinCode] = useState('')
+  const [invite, setInvite] = useState('')
+  const [createError, setCreateError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -196,12 +198,16 @@ function SyncSection(): JSX.Element {
 
   const create = async (): Promise<void> => {
     setBusy(true)
+    setCreateError(null)
     try {
-      await window.snap.syncCreate()
+      const res = await window.snap.syncCreate(invite)
+      if (!res.ok) {
+        setCreateError(res.error ?? "Couldn't create the group")
+        return
+      }
+      setInvite('')
       await refresh()
       await showQr()
-    } catch {
-      /* register failed — status shows nothing changed */
     } finally {
       setBusy(false)
     }
@@ -232,9 +238,21 @@ function SyncSection(): JSX.Element {
 
       {!paired ? (
         <div className="space-y-2">
-          <Button className="w-full" disabled={busy} onClick={create}>
+          {/* A new group takes space on the hub, so creating one needs the
+              hub's invite code. Joining a group never does. */}
+          <input
+            value={invite}
+            onChange={(e) => {
+              setInvite(e.target.value)
+              setCreateError(null)
+            }}
+            placeholder="Invite code"
+            className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-xs"
+          />
+          <Button className="w-full" disabled={busy || !invite.trim()} onClick={create}>
             {busy ? 'Creating…' : 'Create a sync group'}
           </Button>
+          {createError && <p className="text-[11px] text-destructive">{createError}</p>}
           <div className="text-center text-[11px] text-muted-foreground">or join an existing one</div>
           <div className="flex gap-2">
             <input

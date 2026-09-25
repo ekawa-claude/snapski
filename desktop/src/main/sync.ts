@@ -168,16 +168,17 @@ export class SyncManager {
   // --- pairing -----------------------------------------------------------
 
   /** Create a brand-new group on the hub (this device is the origin). */
-  async createGroup(hubUrl: string): Promise<{ code: string }> {
+  async createGroup(hubUrl: string, invite: string): Promise<{ code: string }> {
     const url = hubUrl.trim().replace(/\/+$/, '')
     const groupId = randomUUID()
     const token = randomBytes(32).toString('base64')
     const res = await fetch(`${url}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group_id: groupId, token_hash: sha256Hex(token) }),
+      body: JSON.stringify({ group_id: groupId, token_hash: sha256Hex(token), invite: invite.trim() }),
     })
-    if (!res.ok) throw new Error(`register failed: ${res.status}`)
+    if (res.status === 403) throw new Error('Wrong invite code')
+    if (!res.ok) throw new Error(`Couldn't create the group (hub ${res.status})`)
     this.setToken(token)
     this.state.hubUrl = url
     this.state.groupId = groupId

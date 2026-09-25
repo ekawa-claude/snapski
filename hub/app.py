@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -36,6 +37,12 @@ FILES_DIR = DATA_DIR / "files"
 GROUP_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
 CHANGES_LIMIT = 200
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024  # a single PNG shot; sanity ceiling
+
+# Creating a group costs us up to GROUP_QUOTA_BYTES of disk, and /register is
+# reachable by anyone who finds the URL. When set, a new group needs this code
+# (joining an existing group never does — that goes through its pairing token).
+# Lives in an EnvironmentFile on the server, never in the (public) repo.
+HUB_INVITE = os.environ.get("SNAPSKI_HUB_INVITE", "").strip()
 
 # group_id and shot_id become directory / file names under FILES_DIR. Clients
 # send a UUID and 8 hex chars; anything with a path in it ("../..") must never
@@ -177,8 +184,10 @@ def health():
 async def register(request: Request):
     """First-come, idempotent group registration.
 
-    Body: {"group_id": "<uuid>", "token_hash": "<sha256 hex of token>"}.
-    Re-registering with the same hash is a no-op; a different hash is 409.
+    Body: {"group_id": "<uuid>", "token_hash": "<sha256 hex of token>",
+    "invite": "<code>"}. `invite` is checked only when creating a group and only
+    if SNAPSKI_HUB_INVITE is set (403 otherwise). Re-registering with the same
+    hash is a no-op; a different hash is 409.
     """
     body = await request.json()
     group_id = (body or {}).get("group_id", "").strip()
@@ -192,6 +201,9 @@ async def register(request: Request):
             "SELECT token_hash FROM groups WHERE group_id = ?", (group_id,)
         ).fetchone()
         if existing is None:
+            invite = str((body or {}).get("invite", "")).strip()
+            if HUB_INVITE and not hmac.compare_digest(invite.encode(), HUB_INVITE.encode()):
+                raise HTTPException(403, "invite code required")
             conn.execute(
                 "INSERT INTO groups(group_id, token_hash, created_at) VALUES (?,?,?)",
                 (group_id, token_hash, now),

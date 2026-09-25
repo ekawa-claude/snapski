@@ -149,7 +149,7 @@ const mock = {
   syncSetEnabled: async (v: boolean) => {
     syncStatus.enabled = v
   },
-  syncCreate: async () => true,
+  syncCreate: async () => ({ ok: true }),
   syncJoin: async () => true,
   syncUnpair: async () => {},
   syncPairPayload: async () => ({ code: 'TEST-CODE', qr: '' })

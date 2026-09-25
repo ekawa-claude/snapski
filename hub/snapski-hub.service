@@ -7,6 +7,9 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/snapski/hub
 Environment=SNAPSKI_HUB_DATA=/home/ubuntu/snapski/hub/data
+# SNAPSKI_HUB_INVITE=<code> — required to create a new sync group. Kept out of
+# the repo; the leading '-' lets the hub start (open registration) without it.
+EnvironmentFile=-/home/ubuntu/.config/snapski-hub.env
 ExecStart=/home/ubuntu/snapski/hub/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8790
 Restart=on-failure
 RestartSec=3

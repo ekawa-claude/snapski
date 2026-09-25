@@ -113,7 +113,8 @@ const api = {
 
   // sync (phase 3c)
   syncStatus: (): Promise<SyncStatus | null> => ipcRenderer.invoke('sync:status'),
-  syncCreate: (): Promise<SyncStatus | null> => ipcRenderer.invoke('sync:create'),
+  syncCreate: (invite: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('sync:create', invite),
   syncJoin: (code: string): Promise<boolean> => ipcRenderer.invoke('sync:join', code),
   syncUnpair: (): Promise<void> => ipcRenderer.invoke('sync:unpair'),
   syncSetEnabled: (on: boolean): Promise<void> => ipcRenderer.invoke('sync:setEnabled', on),

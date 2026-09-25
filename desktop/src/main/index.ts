@@ -1060,9 +1060,15 @@ function registerIpc(): void {
 
   // Sync (phase 3c) -----------------------------------------------------
   ipcMain.handle('sync:status', () => syncMgr?.status() ?? null)
-  ipcMain.handle('sync:create', async () => {
-    await syncMgr?.createGroup(DEFAULT_HUB)
-    return syncMgr?.status() ?? null
+  ipcMain.handle('sync:create', async (_e, invite: string) => {
+    // Resolve, don't throw: an invoke rejection reaches the renderer as a
+    // mangled "Error invoking remote method…" string.
+    try {
+      await syncMgr?.createGroup(DEFAULT_HUB, invite ?? '')
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
   ipcMain.handle('sync:join', (_e, code: string) => syncMgr?.joinByCode(code) ?? false)
   ipcMain.handle('sync:unpair', () => syncMgr?.unpair())
