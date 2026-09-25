@@ -62,6 +62,8 @@ function App(): JSX.Element {
   // Latest filter state, readable from the (never re-created) capture handler.
   const filterFavRef = useRef(filterFav)
   filterFavRef.current = filterFav
+  // The open image editor has annotations nobody has exported yet.
+  const editorDirtyRef = useRef(false)
 
   const refreshHistory = useCallback(async () => {
     const list = await window.snap.listHistory()
@@ -89,8 +91,10 @@ function App(): JSX.Element {
         .filter(Boolean)
         .join(' & ')
       showToast(`${did ? did.charAt(0).toUpperCase() + did.slice(1) : 'Captured'} · ${r.width}×${r.height}`)
-      // a new capture supersedes whatever was being edited
-      setEditing(null)
+      // A new capture supersedes what was being edited — unless that would throw
+      // away annotations nobody saved: then the editor stays and the new shot
+      // just lands in the gallery (the toast above the editor says so).
+      if (!editorDirtyRef.current) setEditing(null)
       setEditingVideo(null)
       const list = await refreshHistory()
       // If the gallery viewer was already open, follow the fresh shot; if it
@@ -616,11 +620,22 @@ function App(): JSX.Element {
           capture={editing}
           onClose={closeEditor}
           exportMode="single"
+          onDirtyChange={(d) => (editorDirtyRef.current = d)}
           onExport={async (dataUrl, opts) => {
             await window.snap.exportImage(dataUrl, opts)
             refreshHistory()
           }}
         />
+      )}
+
+      {/* The gallery's toast sits under the editor; repeat it on top while editing. */}
+      {editing && toast && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-[60] -translate-x-1/2">
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-popover/95 px-3.5 py-1.5 text-xs font-medium shadow-xl backdrop-blur">
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+            {toast}
+          </div>
+        </div>
       )}
 
       {editingVideo && (

@@ -33,6 +33,11 @@ interface Props {
   onExport: (dataUrl: string, opts?: { copy: boolean; download: boolean }) => Promise<void>
   /** See ExportMode in EditorToolbar. Defaults to 'split'. */
   exportMode?: ExportMode
+  /**
+   * True while the canvas differs from the last export (or the clean image).
+   * Lets the host avoid throwing away annotations nobody has saved yet.
+   */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 /** Pick black/white text for legibility against a given background color. */
@@ -143,7 +148,13 @@ const EXTRA_PROPS = [
   'bubbleStrokeWidth'
 ]
 
-export function EditorView({ capture, onClose, onExport, exportMode = 'split' }: Props): JSX.Element {
+export function EditorView({
+  capture,
+  onClose,
+  onExport,
+  exportMode = 'split',
+  onDirtyChange
+}: Props): JSX.Element {
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const fcRef = useRef<Canvas | null>(null)
@@ -373,6 +384,16 @@ export function EditorView({ capture, onClose, onExport, exportMode = 'split' }:
   }
 
   // ---------- history ----------
+  // History index of the last export (0 = the untouched image). The canvas is
+  // "dirty" whenever undo/redo/edits put us anywhere else.
+  const savedIndex = useRef(0)
+  const onDirtyRef = useRef(onDirtyChange)
+  onDirtyRef.current = onDirtyChange
+  const reportDirty = useCallback(() => {
+    onDirtyRef.current?.(history.current.index !== savedIndex.current)
+  }, [])
+  useEffect(() => () => onDirtyRef.current?.(false), [])
+
   const snapshot = useCallback(() => {
     const c = fcRef.current
     if (!c || history.current.restoring) return
@@ -381,9 +402,12 @@ export function EditorView({ capture, onClose, onExport, exportMode = 'split' }:
     h.stack = h.stack.slice(0, h.index + 1)
     h.stack.push(json)
     h.index = h.stack.length - 1
+    // Branching off an older state drops the saved one from the stack.
+    if (savedIndex.current > h.index - 1) savedIndex.current = -1
     setCanUndo(h.index > 0)
     setCanRedo(false)
-  }, [])
+    reportDirty()
+  }, [reportDirty])
 
   // ---------- fit canvas to viewport ----------
   const fit = useCallback(() => {
@@ -439,7 +463,8 @@ export function EditorView({ capture, onClose, onExport, exportMode = 'split' }:
     await restore(h.stack[h.index])
     setCanUndo(h.index > 0)
     setCanRedo(h.index < h.stack.length - 1)
-  }, [restore])
+    reportDirty()
+  }, [restore, reportDirty])
 
   const redo = useCallback(async () => {
     const h = history.current
@@ -448,7 +473,8 @@ export function EditorView({ capture, onClose, onExport, exportMode = 'split' }:
     await restore(h.stack[h.index])
     setCanUndo(h.index > 0)
     setCanRedo(h.index < h.stack.length - 1)
-  }, [restore])
+    reportDirty()
+  }, [restore, reportDirty])
 
   const deleteSelected = useCallback(() => {
     const c = fcRef.current
@@ -552,6 +578,8 @@ export function EditorView({ capture, onClose, onExport, exportMode = 'split' }:
       // Seed history with the clean base.
       history.current.stack = [JSON.stringify(c.toObject(EXTRA_PROPS))]
       history.current.index = 0
+      savedIndex.current = 0
+      reportDirty()
       setCanUndo(false)
       setCanRedo(false)
     }
@@ -1095,6 +1123,8 @@ export function EditorView({ capture, onClose, onExport, exportMode = 'split' }:
       dataUrl,
       action === 'both' ? undefined : { copy: action === 'copy', download: action === 'download' }
     )
+    savedIndex.current = history.current.index
+    reportDirty()
     setBusy(null)
     setDoneNote(action)
     setTimeout(() => setDoneNote(null), 1600)

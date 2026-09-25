@@ -175,6 +175,67 @@ try {
     chrome.kill()
   }
 
+  // --- a new capture must not throw away unsaved annotations ---------------
+  // It used to close the editor unconditionally. Clean editor: still closes
+  // (the behaviour asked for back in June). Annotated editor: stays open.
+  {
+    const { chrome, page } = await boot(900)
+    const EDITOR_OPEN = `!!document.querySelector('button[title="Rectangle"]')`
+    const OPEN_EDITOR = `(async () => {
+      document.querySelector('[role="button"][tabindex="0"]')?.click()
+      await new Promise(r => setTimeout(r, 600))
+      document.querySelector('button[title="Annotate"]')?.click()
+      await new Promise(r => setTimeout(r, 1200))
+      return ${EDITOR_OPEN}
+    })()`
+    const FIRE = `window.__fireCapture({ dataUrl: '', savedPath: null, copied: true, width: 10, height: 10 })`
+    const openEditor = async () =>
+      (
+        await page.send('Runtime.evaluate', {
+          expression: OPEN_EDITOR,
+          awaitPromise: true,
+          returnByValue: true
+        })
+      ).result?.result?.value
+
+    check('editor opens from the gallery', (await openEditor()) === true)
+    await page.evaluate(FIRE)
+    await wait(600)
+    check('clean editor closes on a new capture', (await page.evaluate(EDITOR_OPEN)) === false)
+
+    check('editor reopens', (await openEditor()) === true)
+    await page.evaluate(`document.querySelector('button[title="Rectangle"]').click()`)
+    const box = await page.evaluate(`(() => {
+      const c = document.querySelector('canvas.upper-canvas') || document.querySelectorAll('canvas')[1]
+      const r = c.getBoundingClientRect()
+      return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.3, w: r.width * 0.3, h: r.height * 0.3 }
+    })()`)
+    const mouse = (type, x, y) =>
+      page.send('Input.dispatchMouseEvent', {
+        type,
+        x,
+        y,
+        button: 'left',
+        buttons: type === 'mouseReleased' ? 0 : 1,
+        clickCount: 1
+      })
+    await mouse('mousePressed', box.x, box.y)
+    for (let i = 1; i <= 5; i++) await mouse('mouseMoved', box.x + (box.w * i) / 5, box.y + (box.h * i) / 5)
+    await mouse('mouseReleased', box.x + box.w, box.y + box.h)
+    await wait(400)
+    await page.evaluate(FIRE)
+    await wait(600)
+    check('annotated editor stays open on a new capture', (await page.evaluate(EDITOR_OPEN)) === true)
+    const toastOnTop = await page.evaluate(`(() => {
+      const el = [...document.querySelectorAll('div')].find(d => d.className.includes('z-[60]'))
+      return !!el && /Copied/.test(el.textContent)
+    })()`)
+    check('capture toast shows above the editor', toastOnTop === true)
+    page.close()
+    chrome.kill()
+    await wait(800)
+  }
+
   console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
 } finally {
   vite.kill()
