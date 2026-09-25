@@ -21,9 +21,9 @@ import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { loadSettings, saveSettings, ensureOutputFolder } from './settings'
 import { dayDir, listLibrary } from './library'
-import { captureRegion, captureFullscreen, captureRectFast } from './capture'
+import { captureRegion, captureFullscreen, captureRectFast, captureRectFastPng } from './capture'
 import { copyNativeImageToClipboard, copyFileToClipboard } from './clipboard'
-import { getForegroundWindowRectDip } from './winutil'
+import { getForegroundWindowRectDip, initWinUtil, disposeWinUtil } from './winutil'
 import { videoThumbnail, imageThumbnail } from './thumbs'
 import { isFavorite, setFavorite } from './favorites'
 import { exportVideo } from './videoedit'
@@ -92,6 +92,14 @@ function registerSnapProtocol(): void {
   protocol.handle('snap', async (request) => {
     // snap://media/<encodeURIComponent(absolutePath)>
     const url = new URL(request.url)
+    // snap://frame/<id> — the frozen screen behind the capture overlay (memory only).
+    if (url.host === 'frame') {
+      const id = Number(url.pathname.replace(/^\//, ''))
+      if (!frozen || frozen.id !== id) return new Response('gone', { status: 404 })
+      return new Response(new Uint8Array(frozen.png), {
+        headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }
+      })
+    }
     // Normalize before checking so `..` segments can't escape the allowed roots,
     // and compare with a trailing separator so `...\SnapSkiEvil` doesn't pass.
     const filePath = resolve(decodeURIComponent(url.pathname).replace(/^\//, ''))
@@ -250,23 +258,121 @@ function restoreAfterCapture(): void {
   mainWindow.show()
 }
 
+/**
+ * The screen as it was when the hotkey was pressed. The overlay shows this still
+ * frame instead of sitting transparent over the live desktop, and region /
+ * window / fullscreen are cropped from it.
+ *
+ * Why: over a fullscreen game (Skyrim) a transparent always-on-top window made
+ * the game keep rendering underneath while losing focus — both froze. With a
+ * still frame the overlay is an ordinary opaque window, nothing is grabbed
+ * after it closes, and you get the moment you pressed the key.
+ */
+interface FrozenFrame {
+  id: number
+  png: Buffer
+  /** Top-left of the frame in physical screen pixels. */
+  origin: { x: number; y: number }
+  image: Electron.NativeImage | null
+}
+let frozen: FrozenFrame | null = null
+let frozenSeq = 0
+
+/** A display's bounds in physical pixels. */
+function physicalBounds(d: Electron.Display): Rect {
+  return screen.dipToScreenRect(null as never, d.bounds)
+}
+
+async function grabFrozenFrame(): Promise<FrozenFrame> {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const d of screen.getAllDisplays()) {
+    const p = physicalBounds(d)
+    minX = Math.min(minX, p.x)
+    minY = Math.min(minY, p.y)
+    maxX = Math.max(maxX, p.x + p.width)
+    maxY = Math.max(maxY, p.y + p.height)
+  }
+  const png = await captureRectFastPng({ x: minX, y: minY, width: maxX - minX, height: maxY - minY })
+  return { id: ++frozenSeq, png, origin: { x: minX, y: minY }, image: null }
+}
+
+/** Crop a DIP rect out of the frozen frame, or null if there's no frame / no overlap. */
+function cropFrozen(rectDip: Rect): Electron.NativeImage | null {
+  if (!frozen) return null
+  if (!frozen.image) frozen.image = nativeImage.createFromBuffer(frozen.png)
+  const img = frozen.image
+  if (img.isEmpty()) return null
+  const size = img.getSize()
+  const p = screen.dipToScreenRect(null as never, rectDip)
+  const x0 = Math.max(0, Math.round(p.x - frozen.origin.x))
+  const y0 = Math.max(0, Math.round(p.y - frozen.origin.y))
+  const x1 = Math.min(size.width, Math.round(p.x + p.width - frozen.origin.x))
+  const y1 = Math.min(size.height, Math.round(p.y + p.height - frozen.origin.y))
+  if (x1 - x0 < 1 || y1 - y0 < 1) return null
+  return img.crop({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
+}
+
+/**
+ * True from the hotkey press until the capture it started is finished. The
+ * overlay window only exists after a few awaits (minimize, foreground lookup,
+ * frame grab); every press in that gap used to open one more overlay.
+ */
+let overlayBusy = false
+/** An overlay:* handler owns the teardown — the 'closed' event must not do it. */
+let overlayCapturing = false
+
+function endOverlaySession(): void {
+  overlayBusy = false
+  overlayCapturing = false
+  frozen = null
+}
+
 async function showOverlay(): Promise<void> {
   if (overlayWindow) {
-    overlayWindow.focus()
+    if (overlayWindow.isVisible()) overlayWindow.focus()
     return
   }
+  if (overlayBusy) return
+  overlayBusy = true
+  try {
+    await openOverlay()
+  } catch (e) {
+    console.error('overlay failed to open', e)
+    closeOverlay()
+    endOverlaySession()
+    restoreAfterCapture()
+  }
+}
+
+async function openOverlay(): Promise<void> {
   await minimizeForCapture()
-  // Snapshot the foreground window BEFORE the overlay steals focus.
-  pendingWindowRect = await getForegroundWindowRectDip()
+  const mode = loadSettings().captureMode
+  // Both BEFORE the overlay exists: the foreground window must be the user's,
+  // and the frame must not contain the overlay. Video needs the live screen.
+  const [windowRect, frame] = await Promise.all([
+    getForegroundWindowRectDip(),
+    mode === 'video'
+      ? Promise.resolve(null)
+      : grabFrozenFrame().catch((e) => {
+          console.error('frozen frame grab failed, using the live overlay', e)
+          return null
+        })
+  ])
+  pendingWindowRect = windowRect
+  frozen = frame
 
   const vb = virtualBounds()
-  overlayWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     x: vb.x,
     y: vb.y,
     width: vb.width,
     height: vb.height,
+    show: !frame, // a frozen overlay shows once its picture is painted (overlay:ready)
     frame: false,
-    transparent: true,
+    transparent: !frame,
     resizable: false,
     movable: false,
     skipTaskbar: true,
@@ -274,31 +380,78 @@ async function showOverlay(): Promise<void> {
     fullscreenable: false,
     hasShadow: false,
     enableLargerThanScreen: true,
-    backgroundColor: '#00000000',
+    backgroundColor: frame ? '#000000' : '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
   })
-  overlayWindow.setAlwaysOnTop(true, 'screen-saver')
-  overlayWindow.setVisibleOnAllWorkspaces(true)
+  overlayWindow = win
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setVisibleOnAllWorkspaces(true)
 
-  const mode = loadSettings().captureMode
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    overlayWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/overlay.html?mode=${mode}`)
-  } else {
-    overlayWindow.loadFile(join(__dirname, '../renderer/overlay.html'), { query: { mode } })
-  }
-
-  overlayWindow.on('closed', () => {
-    overlayWindow = null
+  win.on('closed', () => {
+    if (overlayWindow === win) overlayWindow = null
+    if (!overlayCapturing) endOverlaySession()
   })
+
+  const query: Record<string, string> = { mode }
+  if (frame) {
+    query.frame = String(frame.id)
+    // Where each display's slice of the frame sits: DIP inside the overlay vs.
+    // physical pixels inside the frame (they differ with display scaling).
+    query.layout = JSON.stringify(
+      screen.getAllDisplays().map((d) => {
+        const p = physicalBounds(d)
+        return {
+          dip: {
+            x: d.bounds.x - vb.x,
+            y: d.bounds.y - vb.y,
+            width: d.bounds.width,
+            height: d.bounds.height
+          },
+          phys: { x: p.x - frame.origin.x, y: p.y - frame.origin.y, width: p.width, height: p.height }
+        }
+      })
+    )
+    // Never leave the user with nothing on screen if the ready signal is lost.
+    setTimeout(() => {
+      if (overlayWindow === win && !win.isVisible()) revealOverlay()
+    }, 2000)
+  }
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/overlay.html?${new URLSearchParams(query)}`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/overlay.html'), { query })
+  }
+}
+
+function revealOverlay(): void {
+  const win = overlayWindow
+  if (!win || win.isDestroyed()) return
+  win.show()
+  win.focus()
 }
 
 function closeOverlay(): void {
-  if (overlayWindow) {
-    overlayWindow.close()
-    overlayWindow = null
+  const win = overlayWindow
+  overlayWindow = null
+  if (win && !win.isDestroyed()) win.close()
+}
+
+/**
+ * Run an overlay:* capture: close the overlay, do the work, then release the
+ * session so the hotkey works again. A second click that lands after the first
+ * has already started is ignored.
+ */
+async function overlayCapture<T>(work: () => Promise<T>): Promise<T | null> {
+  if (overlayCapturing) return null
+  overlayCapturing = true
+  closeOverlay()
+  try {
+    return await work()
+  } finally {
+    endOverlaySession()
   }
 }
 
@@ -805,46 +958,55 @@ function registerIpc(): void {
   })
 
   // Overlay → main
-  ipcMain.handle('overlay:region', async (_e, rectCss: Rect) => {
-    closeOverlay()
-    const vb = virtualBounds()
-    const rectDip: Rect = {
-      x: vb.x + rectCss.x,
-      y: vb.y + rectCss.y,
-      width: rectCss.width,
-      height: rectCss.height
-    }
-    if (loadSettings().captureMode === 'video') {
-      startRecording('region', rectDip)
-      return null
-    }
-    const img = await grabRegionDip(rectDip)
-    return finishCapture(img)
-  })
-  ipcMain.handle('overlay:fullscreen', async () => {
-    closeOverlay()
-    if (loadSettings().captureMode === 'video') {
-      startRecording('fullscreen')
-      return null
-    }
-    const img = await grabFullscreen()
-    return finishCapture(img)
-  })
-  ipcMain.handle('overlay:window', async () => {
-    closeOverlay()
-    if (loadSettings().captureMode === 'video') {
-      startRecording('window')
-      return null
-    }
-    if (pendingWindowRect) {
-      const img = await grabRegionDip(pendingWindowRect)
+  ipcMain.handle('overlay:ready', () => revealOverlay())
+  ipcMain.handle('overlay:region', (_e, rectCss: Rect) =>
+    overlayCapture(async () => {
+      const vb = virtualBounds()
+      const rectDip: Rect = {
+        x: vb.x + rectCss.x,
+        y: vb.y + rectCss.y,
+        width: rectCss.width,
+        height: rectCss.height
+      }
+      if (loadSettings().captureMode === 'video') {
+        startRecording('region', rectDip)
+        return null
+      }
+      const img = cropFrozen(rectDip) ?? (await grabRegionDip(rectDip))
       return finishCapture(img)
-    }
-    const img = await captureFullscreen()
-    return finishCapture(img)
-  })
+    })
+  )
+  ipcMain.handle('overlay:fullscreen', () =>
+    overlayCapture(async () => {
+      if (loadSettings().captureMode === 'video') {
+        startRecording('fullscreen')
+        return null
+      }
+      const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      const img = cropFrozen(disp.bounds) ?? (await grabFullscreen())
+      return finishCapture(img)
+    })
+  )
+  ipcMain.handle('overlay:window', () =>
+    overlayCapture(async () => {
+      if (loadSettings().captureMode === 'video') {
+        startRecording('window')
+        return null
+      }
+      if (pendingWindowRect) {
+        const img = cropFrozen(pendingWindowRect) ?? (await grabRegionDip(pendingWindowRect))
+        return finishCapture(img)
+      }
+      // Foreground lookup failed: take the display under the cursor, never the
+      // main-thread desktopCapturer path (it stalls the app and the game).
+      const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      const img = cropFrozen(disp.bounds) ?? (await grabFullscreen())
+      return finishCapture(img)
+    })
+  )
   ipcMain.handle('overlay:cancel', () => {
     closeOverlay()
+    endOverlaySession()
     // Deliberately only here, not on the overlay's 'closed' event: a successful
     // capture also closes the overlay, and raising the window at that moment
     // would put SnapSki into the shot it is about to grab.
@@ -886,6 +1048,7 @@ app.whenReady().then(() => {
   // install folder, manual registry edits, or a fresh profile).
   applyAutoLaunch(settings.autoLaunch)
   registerSnapProtocol()
+  initWinUtil()
   registerIpc()
   createMainWindow()
   createTray()
@@ -900,6 +1063,7 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  disposeWinUtil()
   recorder.stopRecording()
   destroyRecHud()
 })

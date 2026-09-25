@@ -82,6 +82,7 @@ const api = {
   overlayFullscreen: (): Promise<CaptureResult | null> => ipcRenderer.invoke('overlay:fullscreen'),
   overlayWindow: (): Promise<CaptureResult | null> => ipcRenderer.invoke('overlay:window'),
   overlayCancel: (): Promise<void> => ipcRenderer.invoke('overlay:cancel'),
+  overlayReady: (): Promise<void> => ipcRenderer.invoke('overlay:ready'),
 
   // recording
   stopRecording: (): Promise<void> => ipcRenderer.invoke('record:stop'),

@@ -86,7 +86,17 @@ export async function captureRegion(rectDip: Rect): Promise<NativeImage> {
  * @param rectPhysical capture rect in PHYSICAL screen pixels (relative to the
  *   primary monitor's top-left), e.g. from `screen.dipToScreenRect`.
  */
-export function captureRectFast(rectPhysical: Rect): Promise<NativeImage> {
+export async function captureRectFast(rectPhysical: Rect): Promise<NativeImage> {
+  const img = nativeImage.createFromBuffer(await captureRectFastPng(rectPhysical))
+  if (img.isEmpty()) throw new Error('gdigrab frame decoded empty')
+  return img
+}
+
+/**
+ * Same grab as {@link captureRectFast}, but hands back the PNG bytes as ffmpeg
+ * wrote them (the frozen frame behind the capture overlay is served as-is).
+ */
+export function captureRectFastPng(rectPhysical: Rect): Promise<Buffer> {
   const w = Math.max(1, Math.round(rectPhysical.width))
   const h = Math.max(1, Math.round(rectPhysical.height))
   
@@ -119,6 +129,9 @@ export function captureRectFast(rectPhysical: Rect): Promise<NativeImage> {
     '-frames:v', '1',
     '-f', 'image2pipe',
     '-vcodec', 'png',
+    // The PNG is only transport — it's decoded and re-encoded on save. Default
+    // zlib level made a 4K grab take ~1.2s; level 1 is ~0.3s.
+    '-compression_level', '1',
     'pipe:1'
   ]
   return new Promise((resolve, reject) => {
@@ -142,12 +155,7 @@ export function captureRectFast(rectPhysical: Rect): Promise<NativeImage> {
         reject(new Error(`gdigrab produced no frame (code ${code}): ${err.split('\n').slice(-4).join(' ')}`))
         return
       }
-      const img = nativeImage.createFromBuffer(Buffer.concat(chunks))
-      if (img.isEmpty()) {
-        reject(new Error('gdigrab frame decoded empty'))
-        return
-      }
-      resolve(img)
+      resolve(Buffer.concat(chunks))
     })
   })
 }

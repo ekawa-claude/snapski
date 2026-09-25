@@ -35,6 +35,12 @@ body.video {
   }
 }
 
+#frozen .slice {
+  position: fixed;
+  background-repeat: no-repeat;
+  image-rendering: auto;
+}
+
 #dim {
   position: fixed;
   inset: 0;

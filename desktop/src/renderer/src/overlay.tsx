@@ -12,6 +12,7 @@ if (isVideo) document.body.classList.add('video')
 const verb = isVideo ? 'record' : 'capture'
 
 root.innerHTML = `
+  <div id="frozen"></div>
   <div id="dim"></div>
   <div id="sel"></div>
   <div id="size"></div>
@@ -25,6 +26,51 @@ root.innerHTML = `
     <button id="btn-cancel" class="obtn ghost">Cancel (Esc)</button>
   </div>
 `
+
+interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * Screenshot mode draws the screen as it was at the hotkey press (main grabbed
+ * it before opening us). Each display gets its own slice, scaled from physical
+ * pixels to this window's DIP layout. Main keeps the window hidden until the
+ * picture is painted, so there is no black or half-drawn flash.
+ */
+async function paintFrozenFrame(): Promise<void> {
+  const params = new URLSearchParams(location.search)
+  const frame = params.get('frame')
+  if (!frame) return
+  const url = `snap://frame/${frame}`
+  try {
+    const layout = JSON.parse(params.get('layout') ?? '[]') as Array<{ dip: Box; phys: Box }>
+    const img = new Image()
+    img.src = url
+    await img.decode()
+    const host = document.getElementById('frozen') as HTMLDivElement
+    for (const { dip, phys } of layout) {
+      const k = dip.width / phys.width
+      const slice = document.createElement('div')
+      slice.className = 'slice'
+      slice.style.left = `${dip.x}px`
+      slice.style.top = `${dip.y}px`
+      slice.style.width = `${dip.width}px`
+      slice.style.height = `${dip.height}px`
+      slice.style.backgroundImage = `url("${url}")`
+      slice.style.backgroundSize = `${img.naturalWidth * k}px ${img.naturalHeight * k}px`
+      slice.style.backgroundPosition = `${-phys.x * k}px ${-phys.y * k}px`
+      host.appendChild(slice)
+    }
+  } catch (e) {
+    console.error('frozen frame failed to paint', e)
+  }
+  // Paint first, then tell main to show the window.
+  requestAnimationFrame(() => requestAnimationFrame(() => void window.snap.overlayReady()))
+}
+void paintFrozenFrame()
 
 const sel = document.getElementById('sel') as HTMLDivElement
 const sizeLabel = document.getElementById('size') as HTMLDivElement
